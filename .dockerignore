@@ -1,0 +1,33 @@
+# Ignore Git data
+.git
+.gitignore
+.gitattributes
+
+# Node & Python cache files
+node_modules
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build artifacts
+build/
+dist/
+*.egg-info
+
+# Temporary files
+*.swp
+*.swo
+*.bak
+*.tmp
+.DS_Store
+*.log
+
+# Docker-specific
+.dockerignore
+Dockerfile*
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.code-workspace

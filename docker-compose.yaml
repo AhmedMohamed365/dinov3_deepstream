@@ -1,0 +1,31 @@
+services:
+  deepstream:
+    image: dinov3_deepstream
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host # This prevents freezing in commands that require DNS resolution, such as apt-get update
+    container_name: dinov3_deepstream
+    privileged: true
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/dinov3_deepstream
+    environment:
+      - DISPLAY=$DISPLAY
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    network_mode: host
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/video0:/dev/video0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    #restart: always
+    command: sleep infinity

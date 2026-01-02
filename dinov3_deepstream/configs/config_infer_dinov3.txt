@@ -1,0 +1,45 @@
+[property]
+gie-unique-id=1
+
+# -------------------------- Model / Engine --------------------------
+onnx-file=/dinov3_deepstream/dinov3_models/backbone/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.onnx
+model-engine-file=/dinov3_deepstream/dinov3_models/backbone/dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.onnx_b1_gpu0_fp16.engine
+
+gpu-id=0
+batch-size=1
+
+# FP16=2, INT8=1, FP32=0
+network-mode=2
+
+# Primary (full frame)
+process-mode=1
+
+# "Other" (we're producing features, not boxes/masks/classes)
+network-type=100
+
+# Attach raw tensor output meta
+output-tensor-meta=1
+
+# -------------------------- Input format --------------------------
+# Model expects 3x640x640 (CHW)
+infer-dims=3;640;640
+
+# 0=RGB, 1=BGR, 2=GRAY
+# Your ROS pipeline uses rgb8 and mean/std in RGB order, so set RGB here.
+model-color-format=0
+
+# -------------------------- Preprocess (approx match to PyTorch) --------------------------
+# nvinfer does: y = net-scale-factor * (x - offsets)
+# We want: x/255 - mean
+# So: net-scale-factor=1/(np.array([0.229, 0.224, 0.225]).mean()*255), offsets = mean*255
+net-scale-factor=0.0173520735727919486
+
+# mean*255 for [0.485, 0.456, 0.406]
+offsets=123.675;116.28;103.53
+
+# NOTE: per-channel std division is NOT supported in nvinfer preprocess.
+# For exact (x/255 - mean)/std, use nvdspreprocess + input-tensor-from-meta later.
+
+# -------------------------- Misc --------------------------
+interval=0
+maintain-aspect-ratio=0

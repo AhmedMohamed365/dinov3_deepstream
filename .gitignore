@@ -1,0 +1,22 @@
+.ipynb_checkpoints/
+__pycache__/
+results/
+.vscode/
+
+build/
+*.engine.*
+
+*.egg-info/
+
+test_data/
+
+# === ROS 2 build artifacts ===
+build/
+install/
+log/
+
+# Auxiliar ros2 packages
+aux_packages/
+
+# Files of onnx models
+dinov3_models/backbone
