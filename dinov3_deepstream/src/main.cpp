@@ -272,7 +272,7 @@ depth_src_pad_probe_cuda(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
     // Pick a fixed visualization range (meters). Your logs show ~0.8..4.4.
     // Tune as you like, or make them parameters.
     float near_m = 0.5f;
-    float far_m  = 5.0f;
+    float far_m  = 4.0f;
 
     cudaStream_t stream = 0; // default stream (works; later you can optimize)
 
