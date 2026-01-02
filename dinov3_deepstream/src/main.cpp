@@ -261,6 +261,7 @@ depth_src_pad_probe_cuda(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
     // (If your DeepStream version exposes plane offsets, use them instead.)
     uint8_t* base = (uint8_t*)sl.dataPtr;       // device pointer
     int pitchY = (int)sl.pitch;                 // bytes per row
+    int pitchUV = pitchY;
     int outW = (int)sl.width;
     int outH = (int)sl.height;
 
@@ -275,10 +276,10 @@ depth_src_pad_probe_cuda(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 
     cudaStream_t stream = 0; // default stream (works; later you can optimize)
 
-    cudaError_t e = depth_to_nv12_launch(
+    cudaError_t e = depth_to_nv12_colormap_launch(
         depth_dev, W, H,
         y_dev, uv_dev,
-        outW, outH, pitchY,
+        outW, outH, pitchY, pitchUV,
         near_m, far_m,
         stream);
 
