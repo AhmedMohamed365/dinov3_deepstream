@@ -11,6 +11,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 static inline size_t elem_size_from_infer_dtype(NvDsInferDataType t) {
     switch (t) {
@@ -70,19 +71,33 @@ static inline size_t elem_size_from_infer_dtype(NvDsInferDataType t) {
   }
   
   // avoid attaching twice per buffer
-  static bool already_has_preprocess_for_uid(NvDsBatchMeta *batch_meta, guint64 target_uid) {
-    for (NvDsMetaList *l = batch_meta->batch_user_meta_list; l != nullptr; l = l->next) {
-      NvDsUserMeta *um = (NvDsUserMeta *)l->data;
+  static bool already_has_preprocess_for_uids(
+    NvDsBatchMeta* batch_meta,
+    std::initializer_list<guint64> required_uids)
+{
+  if (!batch_meta) return false;
+
+  // Put required into a set for easy erase/check
+  std::unordered_set<guint64> req(required_uids.begin(), required_uids.end());
+    if (req.empty()) return false;
+
+    for (NvDsMetaList* l = batch_meta->batch_user_meta_list; l != nullptr; l = l->next) {
+      NvDsUserMeta* um = (NvDsUserMeta*)l->data;
       if (!um) continue;
       if (um->base_meta.meta_type != NVDS_PREPROCESS_BATCH_META) continue;
-  
-      auto *pbm = (GstNvDsPreProcessBatchMeta *)um->user_meta_data;
+
+      auto* pbm = (GstNvDsPreProcessBatchMeta*)um->user_meta_data;
       if (!pbm) continue;
-  
+
+      // If this meta covers all required IDs, we're done
+      size_t matched = 0;
       for (auto uid : pbm->target_unique_ids) {
-        if (uid == target_uid) return true;
+        if (req.find(uid) != req.end()) matched++;
       }
+
+      if (matched == req.size()) return true;
     }
+
     return false;
   }
 

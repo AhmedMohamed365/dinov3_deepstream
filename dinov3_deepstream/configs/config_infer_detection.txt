@@ -1,0 +1,34 @@
+[property]
+gie-unique-id=3
+
+# FCOS head ONNX / engine
+onnx-file=/dinov3_deepstream/dinov3_models/head_detection/model.onnx
+model-engine-file=/dinov3_deepstream/dinov3_models/head_detection/model.onnx_b1_gpu0_fp16.engine
+
+gpu-id=0
+batch-size=1
+network-mode=2              # FP16 engine
+process-mode=1              # full-frame
+network-type=0              # detector
+num-detected-classes=80
+labelfile-path=/dinov3_deepstream/dinov3_models/head_detection/class_names.txt
+interval=0
+
+# Consume tensor attached on buffer as GstNvDsPreProcessBatchMeta
+input-tensor-from-meta=1
+
+# Use custom bbox parser (decode detection into boxes)
+custom-lib-path=/dinov3_deepstream/dinov3_deepstream/build/libnvdsinfer_custom_detection.so
+parse-bbox-func-name=NvDsInferParseCustomDetection
+
+# Let DeepStream do clustering/NMS
+cluster-mode=2              # NMS
+
+# Optional debug
+output-tensor-meta=0
+
+[class-attrs-all]
+pre-cluster-threshold=0.2
+topk=20
+nms-iou-threshold=0.1
+

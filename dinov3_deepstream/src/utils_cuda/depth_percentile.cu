@@ -332,7 +332,6 @@ cudaError_t depth_to_nv12_colormap_percentile_launch(
   {
     percentiles_from_hist_dev<<<1, 32, 0, stream>>>(d_hist, BINS, d_minmax, d_valid, d_dminmax);
   }
-}
 
   // 5) render NV12 using colormap and device dmin/dmax
   {

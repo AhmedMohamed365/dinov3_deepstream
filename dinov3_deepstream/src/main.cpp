@@ -18,7 +18,8 @@ dinov3_src_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
   (void)pad;
 
   // Configure these for your depth nvinfer
-  const guint64 depth_gie_uid = 2;              // gie-unique-id of depth nvinfer
+  const guint64 depth_uid = 2;              // gie-unique-id of depth nvinfer
+  const guint64 detection_uid = 3;              // gie-unique-id of depth nvinfer
   const std::string depth_input_name = "features"; // must match depth model input layer name
 
   GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
@@ -30,7 +31,9 @@ dinov3_src_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
   // If your pipeline has queues/converters, metadata can be copied; lock when modifying meta lists.
   nvds_acquire_meta_lock(batch_meta);
 
-  if (already_has_preprocess_for_uid(batch_meta, depth_gie_uid)) {
+  // bool has_depth = already_has_preprocess_for_uid(batch_meta, {depth_gie_uid, detection_gie_uid});
+  // bool has_detection  = already_has_preprocess_for_uid(batch_meta, detection_gie_uid);
+  if (already_has_preprocess_for_uids(batch_meta, {depth_uid, detection_uid})) {
     nvds_release_meta_lock(batch_meta);
     return GST_PAD_PROBE_OK;
   }
@@ -74,7 +77,10 @@ dinov3_src_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
     // Build preprocess meta
     auto *pbm = new GstNvDsPreProcessBatchMeta();
     pbm->private_data = nullptr;
-    pbm->target_unique_ids = { depth_gie_uid };
+    // pbm->target_unique_ids.clear();
+    // if (!has_depth) pbm->target_unique_ids.push_back(depth_gie_uid);
+    // if (!has_detection)  pbm->target_unique_ids.push_back(detection_gie_uid);
+    pbm->target_unique_ids = {depth_uid, detection_uid};
 
     // ROI info (full-frame)
     NvDsRoiMeta roi_meta;
@@ -131,9 +137,11 @@ dinov3_src_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
     std::cout << "[DINOv3->PreprocessMeta] frame=" << frame_meta->frame_num
               << " forwarded layer=" << (layer.layerName ? layer.layerName : "(null)")
               << " bytes=" << bytes
-              << " to depth_gie_uid=" << depth_gie_uid
+              << " to depth_gie_uid=" << depth_uid
               << " input_name=" << depth_input_name
               << "\n";
+
+    break;
   }
 
   nvds_release_meta_lock(batch_meta);
@@ -316,6 +324,7 @@ int main(int argc, char *argv[]) {
   std::string device = "/dev/video0";
   std::string infer_cfg = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_dinov3.txt";
   std::string depth_cfg = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_depth.txt";
+  std::string detection_cfg = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_detection.txt";
 
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -341,15 +350,19 @@ int main(int argc, char *argv[]) {
   "nvvideoconvert ! "
   "video/x-raw(memory:NVMM),format=NV12 ! "
   "queue ! mux.sink_0 "
-  "nvstreammux name=mux batch-size=1 width=800 height=800 live-source=1 batched-push-timeout=40000 ! "
-  "tee name=t "
-  "t. ! queue ! nvvideoconvert ! nveglglessink sync=false "
-  "t. ! queue ! "
-    "nvinfer name=dinov3 config-file-path=" + infer_cfg + " ! "
-    "nvinfer name=depth config-file-path=" + depth_cfg + " ! "
-    "nvvideoconvert name=postdepthconv ! "
-    "video/x-raw(memory:NVMM),format=NV12 ! "
-    "nveglglessink sync=false";
+  "nvstreammux name=mux batch-size=1 width=640 height=640 live-source=1 batched-push-timeout=40000 ! "
+  "tee name=t0 "
+  "t0. ! queue ! nvvideoconvert ! nveglglessink sync=false "
+  "t0. ! queue ! "
+    "nvinfer name=dinov3 config-file-path=" + infer_cfg + " ! tee name=t1 "
+      "t1. ! queue ! nvinfer name=depth config-file-path=" + depth_cfg + " ! "
+      "nvvideoconvert name=postdepthconv ! "
+      "video/x-raw(memory:NVMM),format=NV12 ! "
+      "nveglglessink sync=false "
+      "t1. ! queue ! nvinfer name=detection config-file-path=" + detection_cfg + " ! "
+      "nvvideoconvert name=postdetectionconv ! "
+      "video/x-raw(memory:NVMM),format=RGBA ! nvdsosd ! "
+      "nveglglessink sync=false ";
 
   GError *error = nullptr;
   GstElement *pipeline = gst_parse_launch(pipeline_desc.c_str(), &error);
