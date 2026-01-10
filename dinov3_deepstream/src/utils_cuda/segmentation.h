@@ -2,13 +2,6 @@
 #include <cuda_runtime.h>
 #include <stdint.h>
 
-cudaError_t seg_logits_to_nv12_launch(
-    const void* logits_dev, bool is_half,
-    int C, int inW, int inH,
-    uint8_t* y_dev, uint8_t* uv_dev,
-    int outW, int outH, int pitchY, int pitchUV,
-    cudaStream_t stream);
-
 cudaError_t seg_argmax_launch(
     const void* logits_dev,  // float* or __half*
     bool is_half,
@@ -16,3 +9,9 @@ cudaError_t seg_argmax_launch(
     int32_t* class_map_dev,   // output: [H,W] int32 (class id)
     cudaStream_t stream);
     
+cudaError_t seg_classmap_to_nv12_launch(
+    const int32_t* class_map_dev, int mapW, int mapH,
+    uint8_t* y_dev, uint8_t* uv_dev,
+    int outW, int outH, int pitchY, int pitchUV,
+    float alpha,              // 1.0 = pure color, 0.0 = keep original
+    cudaStream_t stream);
