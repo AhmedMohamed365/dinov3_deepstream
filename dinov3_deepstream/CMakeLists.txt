@@ -20,6 +20,7 @@ add_library(nvdsinfer_custom_detection SHARED
 add_executable(dinov3_deepstream
     src/main.cpp
     src/utils_cuda/depth.cu
+    src/utils_cuda/segmentation.cu
 )
 
 set_target_properties(nvdsinfer_custom_detection PROPERTIES

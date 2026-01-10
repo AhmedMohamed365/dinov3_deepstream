@@ -1,0 +1,18 @@
+#pragma once
+#include <cuda_runtime.h>
+#include <stdint.h>
+
+cudaError_t seg_logits_to_nv12_launch(
+    const void* logits_dev, bool is_half,
+    int C, int inW, int inH,
+    uint8_t* y_dev, uint8_t* uv_dev,
+    int outW, int outH, int pitchY, int pitchUV,
+    cudaStream_t stream);
+
+cudaError_t seg_argmax_launch(
+    const void* logits_dev,  // float* or __half*
+    bool is_half,
+    int C, int H, int W,      // logits shape: [1,C,H,W]
+    int32_t* class_map_dev,   // output: [H,W] int32 (class id)
+    cudaStream_t stream);
+    

@@ -5,6 +5,7 @@
 #include <cuda_fp16.h>
 
 #include "utils_cuda/depth.h"
+#include "utils_cuda/segmentation.h"
 #include "utils/gst_utils.h"
 
 #include <bits/stdc++.h>
@@ -20,6 +21,7 @@ dinov3_src_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
   // Configure these for your depth nvinfer
   const guint64 depth_uid = 2;              // gie-unique-id of depth nvinfer
   const guint64 detection_uid = 3;              // gie-unique-id of depth nvinfer
+  const guint64 segmentation_uid = 4;              // gie-unique-id of segmentation
   const std::string depth_input_name = "features"; // must match depth model input layer name
 
   GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
@@ -31,9 +33,7 @@ dinov3_src_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
   // If your pipeline has queues/converters, metadata can be copied; lock when modifying meta lists.
   nvds_acquire_meta_lock(batch_meta);
 
-  // bool has_depth = already_has_preprocess_for_uid(batch_meta, {depth_gie_uid, detection_gie_uid});
-  // bool has_detection  = already_has_preprocess_for_uid(batch_meta, detection_gie_uid);
-  if (already_has_preprocess_for_uids(batch_meta, {depth_uid, detection_uid})) {
+  if (already_has_preprocess_for_uids(batch_meta, {depth_uid, detection_uid, segmentation_uid})) {
     nvds_release_meta_lock(batch_meta);
     return GST_PAD_PROBE_OK;
   }
@@ -77,10 +77,7 @@ dinov3_src_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
     // Build preprocess meta
     auto *pbm = new GstNvDsPreProcessBatchMeta();
     pbm->private_data = nullptr;
-    // pbm->target_unique_ids.clear();
-    // if (!has_depth) pbm->target_unique_ids.push_back(depth_gie_uid);
-    // if (!has_detection)  pbm->target_unique_ids.push_back(detection_gie_uid);
-    pbm->target_unique_ids = {depth_uid, detection_uid};
+    pbm->target_unique_ids = {depth_uid, detection_uid, segmentation_uid};
 
     // ROI info (full-frame)
     NvDsRoiMeta roi_meta;
@@ -134,12 +131,12 @@ dinov3_src_pad_probe(GstPad *pad, GstPadProbeInfo *info, gpointer user_data) {
 
     nvds_add_user_meta_to_batch(batch_meta, bm_umeta);
 
-    std::cout << "[DINOv3->PreprocessMeta] frame=" << frame_meta->frame_num
-              << " forwarded layer=" << (layer.layerName ? layer.layerName : "(null)")
-              << " bytes=" << bytes
-              << " to depth_gie_uid=" << depth_uid
-              << " input_name=" << depth_input_name
-              << "\n";
+    // std::cout << "[DINOv3->PreprocessMeta] frame=" << frame_meta->frame_num
+    //           << " forwarded layer=" << (layer.layerName ? layer.layerName : "(null)")
+    //           << " bytes=" << bytes
+    //           << " to depth_gie_uid=" << depth_uid
+    //           << " input_name=" << depth_input_name
+    //           << "\n";
 
     break;
   }
@@ -320,11 +317,192 @@ depth_src_pad_probe_cuda(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
   return GST_PAD_PROBE_OK;
 }
 
+
+// Attach NvDsInferSegmentationMeta so nvsegvisual can colorize it
+static GstPadProbeReturn
+seg_src_pad_probe_cuda(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
+{
+
+  (void)pad; (void)user_data;
+  static int counter = 0;
+  counter++;
+
+  constexpr guint SEG_UID = 4;
+  const std::string SEG_LAYER = "semantic_segmentation";
+
+  GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+  if (!buf) return GST_PAD_PROBE_OK;
+
+  NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
+  if (!batch_meta) return GST_PAD_PROBE_OK;
+
+  // Find preprocess meta that targets SEG_UID (same pattern as depth)
+  auto* pbm = find_preprocess_meta_for_uid(batch_meta, SEG_UID);
+  if (!pbm) return GST_PAD_PROBE_OK;
+
+  // Reusable device buffer for argmax output
+  static int32_t* class_map_dev = nullptr;
+  static size_t class_map_dev_bytes = 0;
+
+  nvds_acquire_meta_lock(batch_meta);
+
+  for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame; l_frame = l_frame->next) {
+    NvDsFrameMeta* fmeta = (NvDsFrameMeta*)l_frame->data;
+    if (!fmeta) continue;
+
+    // Avoid adding twice
+    if (frame_has_segmeta(fmeta)) continue;
+
+    // Find tensor meta produced by seg nvinfer under ROI user meta
+    NvDsInferTensorMeta* tmeta = nullptr;
+    for (size_t r = 0; r < pbm->roi_vector.size(); ++r) {
+      auto& roi_meta = pbm->roi_vector[r];
+      tmeta = find_tensor_meta_in_user_meta_list(roi_meta.roi_user_meta_list, SEG_UID);
+      if (tmeta) break;
+    }
+    if (!tmeta) continue;
+
+    int li = find_layer_index(tmeta, SEG_LAYER);
+    if (li < 0) continue;
+
+    NvDsInferLayerInfo& layer = tmeta->output_layers_info[li];
+    void* logits_dev = (tmeta->out_buf_ptrs_dev ? tmeta->out_buf_ptrs_dev[li] : nullptr);
+    if (!logits_dev) continue;
+
+    // Expect [1,C,H,W] (NCHW)
+    int C = 0, H = 0, W = 0;
+    if (layer.inferDims.numDims == 4) {
+      C = layer.inferDims.d[1];
+      H = layer.inferDims.d[2];
+      W = layer.inferDims.d[3];
+    } else if (layer.inferDims.numDims == 3) {
+      C = layer.inferDims.d[0];
+      H = layer.inferDims.d[1];
+      W = layer.inferDims.d[2];
+    } else {
+      continue;
+    }
+    if (C <= 0 || H <= 0 || W <= 0) continue;
+
+    bool is_half = (layer.dataType == NvDsInferDataType::HALF);
+    if (!(layer.dataType == NvDsInferDataType::FLOAT || layer.dataType == NvDsInferDataType::HALF))
+      continue;
+
+    const size_t n_pix = (size_t)H * (size_t)W;
+    const size_t need_bytes = n_pix * sizeof(int32_t);
+
+    if (!class_map_dev || class_map_dev_bytes < need_bytes) {
+      if (class_map_dev) cudaFree(class_map_dev);
+      cudaMalloc(&class_map_dev, need_bytes);
+      class_map_dev_bytes = need_bytes;
+    }
+
+
+    // Allocate host class map (owned by the metadata; freed in release func)
+    int32_t* class_map_host = (int32_t*)g_malloc(need_bytes);
+    // std::memset(class_map_host, 0, need_bytes);
+
+    cudaStream_t stream = 0;
+    cudaError_t e1 = seg_argmax_launch(logits_dev, is_half, C, H, W, class_map_dev, stream);
+    if (e1 != cudaSuccess) { g_free(class_map_host); continue; }
+
+    // Correctness-first: ensure host map is ready before nvsegvisual uses it
+    cudaError_t e2 = cudaMemcpyAsync(class_map_host, class_map_dev, need_bytes,
+                                    cudaMemcpyDeviceToHost, stream);
+    if (e2 != cudaSuccess) { g_free(class_map_host); continue; }
+
+    cudaError_t e3 = cudaStreamSynchronize(stream);
+    if (e3 != cudaSuccess) { g_free(class_map_host); continue; }
+
+    // Build NvDsInferSegmentationMeta
+    auto* smeta = (NvDsInferSegmentationMeta*)g_malloc0(sizeof(NvDsInferSegmentationMeta));
+    smeta->unique_id = SEG_UID;   // IMPORTANT for nvsegvisual
+    smeta->classes   = C;
+    smeta->width     = W;
+    smeta->height    = H;
+    gsize map_bytes = (gsize)W * (gsize)H * sizeof(int);
+    smeta->class_map = (int*)class_map_host;
+    smeta->class_probabilities_map = nullptr;
+    for (size_t i = 0; i < n_pix; ++i) class_map_host[i] = 21; // or 2, or 5, or 132
+    // printf("[SEGMENTATION] frame=%d segmeta uid=%lu classes=%d size=%dx%d\n",
+    //        fmeta->frame_num, smeta->unique_id, smeta->classes, smeta->width, smeta->height); fflush(stdout);
+
+    // for (int i=0; i < W * H; i+=500) { 
+    //   printf("%d ", smeta->class_map[i]); fflush(stdout); }
+
+    NvDsUserMeta* um = nvds_acquire_user_meta_from_pool(batch_meta);
+    if (!um) {
+      g_free(smeta->class_map);
+      g_free(smeta);
+      return GST_PAD_PROBE_OK;
+    }
+
+    um->user_meta_data = (gpointer)smeta;
+    um->base_meta.meta_type    = (NvDsMetaType)NVDSINFER_SEGMENTATION_META;
+    um->base_meta.copy_func    = segmeta_copy_func;
+    um->base_meta.release_func = segmeta_release_func;
+    um->base_meta.batch_meta   = batch_meta;
+
+    nvds_add_user_meta_to_frame(fmeta, um);
+
+  }
+
+  nvds_release_meta_lock(batch_meta);
+  return GST_PAD_PROBE_OK;
+}
+
+
+
+static GstPadProbeReturn
+nvsegvisual_sink_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
+{
+  (void)pad; (void)user_data;
+  GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+  if (!buf) return GST_PAD_PROBE_OK;
+
+  NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
+  if (!batch_meta) return GST_PAD_PROBE_OK;
+
+  for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame; l_frame = l_frame->next) {
+    NvDsFrameMeta* fmeta = (NvDsFrameMeta*)l_frame->data;
+    if (!fmeta) continue;
+
+    for (NvDsMetaList* l = fmeta->frame_user_meta_list; l; l = l->next) {
+      NvDsUserMeta* um = (NvDsUserMeta*)l->data;
+      if (!um) continue;
+      if (um->base_meta.meta_type != NVDSINFER_SEGMENTATION_META) continue;
+
+      auto* sm = (NvDsInferSegmentationMeta*)um->user_meta_data;
+      if (!sm || !sm->class_map) continue;
+
+      // sample min/max quickly (don’t scan all pixels every frame)
+      int mn = 1e9, mx = -1e9;
+      int step = (sm->width * sm->height) / 2000; // ~2000 samples
+      if (step < 1) step = 1;
+      for (guint i = 0; i < sm->width * sm->height; i += step) {
+        int v = sm->class_map[i];
+        mn = std::min(mn, v);
+        mx = std::max(mx, v);
+      }
+
+      std::cout << "[NVSEGVISUAL SINK] frame=" << fmeta->frame_num
+                << " uid=" << sm->unique_id
+                << " classes=" << sm->classes
+                << " size=" << sm->width << "x" << sm->height
+                << " sample_min=" << mn << " sample_max=" << mx
+                << "\n";
+      break;
+    }
+  }
+  return GST_PAD_PROBE_OK;
+}
+
 int main(int argc, char *argv[]) {
   std::string device = "/dev/video0";
   std::string infer_cfg = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_dinov3.txt";
   std::string depth_cfg = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_depth.txt";
   std::string detection_cfg = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_detection.txt";
+  std::string segmentation_cfg = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_segmentation.txt";
 
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -355,14 +533,19 @@ int main(int argc, char *argv[]) {
   "t0. ! queue ! nvvideoconvert ! nveglglessink sync=false "
   "t0. ! queue ! "
     "nvinfer name=dinov3 config-file-path=" + infer_cfg + " ! tee name=t1 "
-      "t1. ! queue ! nvinfer name=depth config-file-path=" + depth_cfg + " ! "
-      "nvvideoconvert name=postdepthconv ! "
-      "video/x-raw(memory:NVMM),format=NV12 ! "
+      // "t1. ! queue ! nvinfer name=depth config-file-path=" + depth_cfg + " ! "
+      // "nvvideoconvert name=postdepthconv ! "
+      // "video/x-raw(memory:NVMM),format=NV12 ! "
+      // "nveglglessink sync=false "
+      // "t1. ! queue ! nvinfer name=detection config-file-path=" + detection_cfg + " ! "
+      // "nvvideoconvert name=postdetectionconv ! "
+      // "video/x-raw(memory:NVMM),format=RGBA ! nvdsosd ! "
+      // "nveglglessink sync=false "
+      "t1. ! queue ! nvinfer name=seg config-file-path=" + segmentation_cfg + " ! "
+      "nvvideoconvert ! video/x-raw(memory:NVMM),format=RGBA,width=320,height=320 ! "
+      "nvsegvisual name=nvsegvisual0 width=320 height=320 ! "
       "nveglglessink sync=false "
-      "t1. ! queue ! nvinfer name=detection config-file-path=" + detection_cfg + " ! "
-      "nvvideoconvert name=postdetectionconv ! "
-      "video/x-raw(memory:NVMM),format=RGBA ! nvdsosd ! "
-      "nveglglessink sync=false ";
+      ;
 
   GError *error = nullptr;
   GstElement *pipeline = gst_parse_launch(pipeline_desc.c_str(), &error);
@@ -392,24 +575,39 @@ int main(int argc, char *argv[]) {
   gst_object_unref(srcpad);
   gst_object_unref(dinov3);
 
-  GstElement* depth = gst_bin_get_by_name(GST_BIN(pipeline), "depth");
-  if (!depth) {
-    std::cerr << "Could not find nvinfer element named 'depth'\n";
-    gst_object_unref(pipeline);
-    return 1;
-  }
-  GstPad* depth_srcpad = gst_element_get_static_pad(depth, "src");
-  if (!depth_srcpad) {
-    std::cerr << "Could not get src pad of 'depth'\n";
-    gst_object_unref(depth);
-    gst_object_unref(pipeline);
-    return 1;
-  }
-  gst_pad_add_probe(depth_srcpad, GST_PAD_PROBE_TYPE_BUFFER, depth_src_pad_probe_cuda, nullptr, nullptr);
-  gst_object_unref(depth_srcpad);
-  gst_object_unref(depth);
+  // GstElement* depth = gst_bin_get_by_name(GST_BIN(pipeline), "depth");
+  // if (!depth) {
+  //   std::cerr << "Could not find nvinfer element named 'depth'\n";
+  //   gst_object_unref(pipeline);
+  //   return 1;
+  // }
+  // GstPad* depth_srcpad = gst_element_get_static_pad(depth, "src");
+  // if (!depth_srcpad) {
+  //   std::cerr << "Could not get src pad of 'depth'\n";
+  //   gst_object_unref(depth);
+  //   gst_object_unref(pipeline);
+  //   return 1;
+  // }
+  // gst_pad_add_probe(depth_srcpad, GST_PAD_PROBE_TYPE_BUFFER, depth_src_pad_probe_cuda, nullptr, nullptr);
+  // gst_object_unref(depth_srcpad);
+  // gst_object_unref(depth);
 
 
+  GstElement* seg = gst_bin_get_by_name(GST_BIN(pipeline), "seg");
+  if (!seg) {
+    std::cerr << "Could not find nvinfer element named 'seg'\n";
+    return 1;
+  }
+  GstPad* seg_srcpad = gst_element_get_static_pad(seg, "src");
+  gst_pad_add_probe(seg_srcpad, GST_PAD_PROBE_TYPE_BUFFER, seg_src_pad_probe_cuda, nullptr, nullptr);
+  gst_object_unref(seg_srcpad);
+  gst_object_unref(seg);
+
+  GstElement* nvsegvisual = gst_bin_get_by_name(GST_BIN(pipeline), "nvsegvisual0"); // give it a name in pipeline
+  GstPad* sinkpad = gst_element_get_static_pad(nvsegvisual, "sink");
+  gst_pad_add_probe(sinkpad, GST_PAD_PROBE_TYPE_BUFFER, nvsegvisual_sink_probe, nullptr, nullptr);
+  gst_object_unref(sinkpad);
+  gst_object_unref(nvsegvisual);
   // Run
   gst_element_set_state(pipeline, GST_STATE_PLAYING);
 

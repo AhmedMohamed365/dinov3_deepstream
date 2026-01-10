@@ -142,3 +142,65 @@ static int find_layer_index(NvDsInferTensorMeta* tmeta, const std::string& name)
   }
   return -1;
 }
+
+// SEGMENTATION UTILS
+static gpointer segmeta_copy_func(gpointer data, gpointer user_data)
+{
+  (void)user_data;
+
+  NvDsUserMeta* src_umeta = (NvDsUserMeta*)data;
+  if (!src_umeta) return nullptr;
+
+  auto* src = (NvDsInferSegmentationMeta*)src_umeta->user_meta_data;
+  if (!src) return nullptr;
+
+  auto* dst = (NvDsInferSegmentationMeta*)g_malloc0(sizeof(NvDsInferSegmentationMeta));
+  dst->unique_id = src->unique_id;
+  dst->classes   = src->classes;
+  dst->width     = src->width;
+  dst->height    = src->height;
+
+  // Deep copy class_map
+  if (src->class_map && src->width > 0 && src->height > 0) {
+    gsize bytes = (gsize)src->width * (gsize)src->height * sizeof(int);
+    dst->class_map = (int*)g_memdup2(src->class_map, bytes);
+  } else {
+    dst->class_map = nullptr;
+  }
+
+  // Only set this if YOU allocate it; else keep null.
+  dst->class_probabilities_map = nullptr;
+
+  return (gpointer)dst; // <- DeepStream will store this as dest_umeta->user_meta_data
+}
+
+static void segmeta_release_func(gpointer data, gpointer user_data)
+{
+  (void)user_data;
+
+  NvDsUserMeta* umeta = (NvDsUserMeta*)data;
+  if (!umeta) return;
+
+  auto* m = (NvDsInferSegmentationMeta*)umeta->user_meta_data;
+  if (!m) return;
+
+  if (m->class_map) g_free(m->class_map);
+  m->class_map = nullptr;
+
+  // Only free if you allocated it (recommended: keep it null always)
+  if (m->class_probabilities_map) g_free(m->class_probabilities_map);
+  m->class_probabilities_map = nullptr;
+
+  g_free(m);
+  umeta->user_meta_data = nullptr;
+}
+
+
+static bool frame_has_segmeta(NvDsFrameMeta* fmeta) {
+  for (NvDsMetaList* l = fmeta->frame_user_meta_list; l; l = l->next) {
+    auto* um = (NvDsUserMeta*)l->data;
+    if (!um) continue;
+    if (um->base_meta.meta_type == NVDSINFER_SEGMENTATION_META) return true;
+  }
+  return false;
+}

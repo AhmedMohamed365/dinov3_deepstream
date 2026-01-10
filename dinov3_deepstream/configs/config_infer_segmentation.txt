@@ -1,0 +1,37 @@
+[property]
+gie-unique-id=4
+
+onnx-file=/dinov3_deepstream/dinov3_models/head_segmentation/model.onnx
+model-engine-file=/dinov3_deepstream/dinov3_models/head_segmentation/model.onnx_b1_gpu0_fp16.engine
+
+gpu-id=0
+batch-size=1
+network-mode=2              # FP16 engine
+process-mode=1              # full-frame
+network-type=100              # non-default
+num-detected-classes=134
+labelfile-path=/dinov3_deepstream/dinov3_models/head_segmentation/class_names.txt
+interval=0
+
+#parse-segmentation-func-name=NvDsInferParseCustomSegmentation
+#custom-lib-path=/dinov3_deepstream/dinov3_deepstream/build/libnvdsinfer_custom_segmentation.so
+
+#parse-bbox-instance-mask-func-name=/dinov3_deepstream/dinov3_deepstream/build/libnvdsinfer_custom_segmentation.so
+#output-instance-mask
+
+# Your output is NCHW: [1,134,320,320]
+# segmentation-output-order=0
+
+# Optional (only meaningful if output is probabilities; see note below)
+#segmentation-threshold=0.0
+
+#output-blob-names=semantic_segmentation
+
+
+# Consume tensor attached on buffer as GstNvDsPreProcessBatchMeta
+input-tensor-from-meta=1
+
+# Optional debug
+output-tensor-meta=1
+
+
