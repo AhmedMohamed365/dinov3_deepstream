@@ -2,6 +2,10 @@
 #include <cuda_fp16.h>
 #include <stdint.h>
 
+#ifndef NUM_CLASSES
+#define NUM_CLASSES 134
+#endif
+
 __global__ void argmax_float_kernel(
   const float* __restrict__ logits,
   int C, int H, int W,
@@ -201,4 +205,61 @@ cudaError_t seg_classmap_to_nv12_launch(
       uv_dev, outW, outH, pitchUV, alpha);
 
   return cudaGetLastError();
+}
+
+__global__ void accumulate_centroids_kernel(
+  const int32_t* __restrict__ cls, int W, int H,
+  int num_classes,
+  int32_t* __restrict__ count,
+  unsigned long long* __restrict__ sumx,
+  unsigned long long* __restrict__ sumy)
+{
+int x = (int)(blockIdx.x * blockDim.x + threadIdx.x);
+int y = (int)(blockIdx.y * blockDim.y + threadIdx.y);
+if (x >= W || y >= H) return;
+
+int id = cls[y * W + x];
+if (id <= 0) return;                 // skip background and negatives
+if ((unsigned)id >= (unsigned)num_classes) return;
+
+atomicAdd(&count[id], 1);
+atomicAdd(&sumx[id], (unsigned long long)x);
+atomicAdd(&sumy[id], (unsigned long long)y);
+}
+
+cudaError_t accumulate_centroids_kernel_launch(
+  const int32_t* class_map_dev,
+  int W, int H,
+  int num_classes,
+  int32_t* count_dev,
+  int64_t* sumx_dev,
+  int64_t* sumy_dev,
+  cudaStream_t stream)
+{
+if (!class_map_dev || !count_dev || !sumx_dev || !sumy_dev) return cudaErrorInvalidDevicePointer;
+if (W <= 0 || H <= 0 || num_classes <= 0) return cudaErrorInvalidValue;
+
+// Clear outputs
+cudaError_t e;
+e = cudaMemsetAsync(count_dev, 0, (size_t)num_classes * sizeof(int32_t), stream);
+if (e != cudaSuccess) return e;
+
+e = cudaMemsetAsync(sumx_dev, 0, (size_t)num_classes * sizeof(int64_t), stream);
+if (e != cudaSuccess) return e;
+
+e = cudaMemsetAsync(sumy_dev, 0, (size_t)num_classes * sizeof(int64_t), stream);
+if (e != cudaSuccess) return e;
+
+dim3 block(16, 16);
+dim3 grid((W + block.x - 1) / block.x,
+          (H + block.y - 1) / block.y);
+
+accumulate_centroids_kernel<<<grid, block, 0, stream>>>(
+    class_map_dev, W, H,
+    num_classes,
+    count_dev,
+    (unsigned long long*)sumx_dev,
+    (unsigned long long*)sumy_dev);
+
+return cudaGetLastError();
 }

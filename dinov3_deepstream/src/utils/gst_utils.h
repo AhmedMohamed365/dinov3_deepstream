@@ -204,3 +204,12 @@ static bool frame_has_segmeta(NvDsFrameMeta* fmeta) {
   }
   return false;
 }
+
+
+static inline const char* class_name(int id) {
+  // TODO: replace with your real 134-class names
+  static thread_local char buf[32];
+  if (id == 1) return "person";
+  std::snprintf(buf, sizeof(buf), "class_%d", id);
+  return buf;
+}

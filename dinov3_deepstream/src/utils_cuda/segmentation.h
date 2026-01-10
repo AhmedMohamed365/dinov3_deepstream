@@ -15,3 +15,12 @@ cudaError_t seg_classmap_to_nv12_launch(
     int outW, int outH, int pitchY, int pitchUV,
     float alpha,              // 1.0 = pure color, 0.0 = keep original
     cudaStream_t stream);
+
+    cudaError_t accumulate_centroids_kernel_launch(
+        const int32_t* class_map_dev,
+        int W, int H,
+        int num_classes,
+        int32_t* count_dev,
+        int64_t* sumx_dev,
+        int64_t* sumy_dev,
+        cudaStream_t stream);
