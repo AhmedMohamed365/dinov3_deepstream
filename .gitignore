@@ -1,4 +1,4 @@
-build/
+build*/
 *.engine
 
 # Files of onnx models

@@ -19,6 +19,10 @@ add_library(nvdsinfer_custom_detection SHARED
 
 add_executable(dinov3_deepstream
     src/main.cpp
+    src/probes/dinov3_probe.cpp
+    src/probes/depth_probe.cpp
+    src/probes/segmentation_probe.cpp
+    src/pipeline/pipeline_builder.cpp
     src/utils_cuda/depth.cu
     src/utils_cuda/segmentation.cu
 )
@@ -38,6 +42,7 @@ target_include_directories(nvdsinfer_custom_detection PRIVATE
 )
 
 target_include_directories(dinov3_deepstream PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src  # Allow #include "config/app_config.h"
     ${GST_INCLUDE_DIRS}
     ${DEEPSTREAM_ROOT}/sources/includes
     ${CUDAToolkit_INCLUDE_DIRS}
