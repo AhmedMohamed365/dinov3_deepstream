@@ -33,32 +33,38 @@ std::string PipelineBuilder::build_visualization_branch() {
 std::string PipelineBuilder::build_inference_branches() {
     std::stringstream ss;
 
-    // Main inference branch with tee (always included - DINOv3 backbone)
+    // Shared DINOv3 backbone (runs once)
     ss << "t0. ! queue ! "
        << "nvinfer name=dinov3 config-file-path=" << config.model_paths.dinov3_config
-       << " ! tee name=t1 ";
+       << " ! tee name=t1 allow-not-linked=true ";
 
-    // Conditionally add depth branch
+    // Each branch - tee will NOT pass through buffers, forcing independent copies
+    // The probes modify surfaces in-place, so we need truly independent memory
+
+    // Depth branch
     if (config.inference_enable.depth) {
-        ss << "t1. ! queue ! nvinfer name=depth config-file-path="
+        ss << "t1. ! queue name=q_depth ! "
+           << "nvinfer name=depth config-file-path="
            << config.model_paths.depth_config << " ! "
            << "nvvideoconvert name=postdepthconv ! "
            << "video/x-raw(memory:NVMM),format=NV12 ! "
            << "nveglglessink sync=false ";
     }
 
-    // Conditionally add detection branch
+    // Detection branch
     if (config.inference_enable.detection) {
-        ss << "t1. ! queue ! nvinfer name=detection config-file-path="
+        ss << "t1. ! queue name=q_det ! "
+           << "nvinfer name=detection config-file-path="
            << config.model_paths.detection_config << " ! "
            << "nvvideoconvert name=postdetectionconv ! "
            << "video/x-raw(memory:NVMM),format=RGBA ! nvdsosd ! "
            << "nveglglessink sync=false ";
     }
 
-    // Conditionally add segmentation branch
+    // Segmentation branch
     if (config.inference_enable.segmentation) {
-        ss << "t1. ! queue ! nvinfer name=seg config-file-path="
+        ss << "t1. ! queue name=q_seg ! "
+           << "nvinfer name=seg config-file-path="
            << config.model_paths.segmentation_config << " ! "
            << "nvvideoconvert ! "
            << "video/x-raw(memory:NVMM),format=RGBA,width=" << config.pipeline.width

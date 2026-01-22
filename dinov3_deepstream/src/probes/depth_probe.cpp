@@ -212,6 +212,56 @@ GstPadProbeReturn DepthProbeHandler::handle_buffer(
         return GST_PAD_PROBE_OK;
     }
 
+    // CRITICAL: Copy surface to ensure independence from other branches
+    // The tee element shares the same NvBufSurface across branches, so we must copy
+    NvBufSurface* new_surface = nullptr;
+    NvBufSurfaceCreateParams create_params{};
+    create_params.gpuId = surface->gpuId;
+    create_params.width = surface->surfaceList[0].width;
+    create_params.height = surface->surfaceList[0].height;
+    create_params.size = 0;  // Auto-calculate
+    create_params.colorFormat = surface->surfaceList[0].colorFormat;
+    create_params.layout = surface->surfaceList[0].layout;
+    create_params.memType = surface->memType;
+
+    if (NvBufSurfaceCreate(&new_surface, surface->batchSize, &create_params) != 0) {
+        if (debug) std::cerr << "[DEPTH] Failed to create surface copy\n";
+        gst_buffer_unmap(buf, &in_map);
+        return GST_PAD_PROBE_OK;
+    }
+
+    // Copy surface contents
+    if (NvBufSurfaceCopy(surface, new_surface) != 0) {
+        if (debug) std::cerr << "[DEPTH] Failed to copy surface\n";
+        NvBufSurfaceDestroy(new_surface);
+        gst_buffer_unmap(buf, &in_map);
+        return GST_PAD_PROBE_OK;
+    }
+
+    // Unmap old surface and update buffer to point to new surface
+    gst_buffer_unmap(buf, &in_map);
+
+    // Remove old memory from buffer
+    gst_buffer_remove_all_memory(buf);
+
+    // Wrap new surface in GstMemory and add to buffer
+    GstMemory* mem = gst_memory_new_wrapped(
+        (GstMemoryFlags)(GST_MEMORY_FLAG_READONLY | GST_MEMORY_FLAG_NO_SHARE),
+        new_surface,
+        sizeof(NvBufSurface),
+        0,
+        sizeof(NvBufSurface),
+        new_surface,
+        [](gpointer data) { NvBufSurfaceDestroy((NvBufSurface*)data); });
+
+    gst_buffer_append_memory(buf, mem);
+
+    // Re-map the new surface
+    if (!gst_buffer_map(buf, &in_map, GST_MAP_READ)) {
+        return GST_PAD_PROBE_OK;
+    }
+    surface = (NvBufSurface*)in_map.data;
+
     auto* pbm = find_preprocess_meta_for_uid(batch_meta, config.inference_ids.depth_uid);
     if (!pbm) {
         if (debug) {

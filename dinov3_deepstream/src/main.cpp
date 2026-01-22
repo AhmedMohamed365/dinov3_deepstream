@@ -88,7 +88,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // Attach DINOv3 probe (always - backbone required)
+  // Attach DINOv3 probe to shared backbone (runs once)
   auto* dinov3_handler = new DINOv3ProbeHandler(app_config);
   if (!PipelineProbeAttacher::attach_probe_to_element(
           pipeline, "dinov3",
@@ -99,7 +99,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // Conditionally attach depth probe
+  // Attach task-specific probes
   if (app_config.inference_enable.depth) {
     auto* depth_handler = new DepthProbeHandler(app_config);
     if (!PipelineProbeAttacher::attach_probe_to_element(
@@ -112,7 +112,6 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  // Conditionally attach segmentation probe
   if (app_config.inference_enable.segmentation) {
     auto* seg_handler = new SegmentationProbeHandler(seg_ctx);
     if (!PipelineProbeAttacher::attach_probe_to_element(
