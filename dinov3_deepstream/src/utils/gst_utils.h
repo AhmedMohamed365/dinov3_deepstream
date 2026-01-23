@@ -213,3 +213,69 @@ static inline const char* class_name(int id) {
   std::snprintf(buf, sizeof(buf), "class_%d", id);
   return buf;
 }
+
+/**
+ * Copy NvBufSurface to ensure independence when buffers are shared via tee.
+ *
+ * The tee element shares the same NvBufSurface pointer across branches.
+ * This function creates an independent GPU memory copy and replaces the
+ * buffer's surface pointer.
+ *
+ * @param buf GstBuffer containing the surface
+ * @param in_out_map GstMapInfo with currently mapped surface (will be updated)
+ * @param surface Current NvBufSurface pointer
+ * @return New NvBufSurface pointer, or nullptr on failure
+ */
+static inline NvBufSurface* copy_and_replace_buffer_surface(
+    GstBuffer* buf,
+    GstMapInfo& in_out_map,
+    NvBufSurface* surface)
+{
+    if (!buf || !surface) return nullptr;
+
+    // Create new surface with identical parameters
+    NvBufSurface* new_surface = nullptr;
+    NvBufSurfaceCreateParams create_params{};
+    create_params.gpuId = surface->gpuId;
+    create_params.width = surface->surfaceList[0].width;
+    create_params.height = surface->surfaceList[0].height;
+    create_params.size = 0;  // Auto-calculate
+    create_params.colorFormat = surface->surfaceList[0].colorFormat;
+    create_params.layout = surface->surfaceList[0].layout;
+    create_params.memType = surface->memType;
+
+    if (NvBufSurfaceCreate(&new_surface, surface->batchSize, &create_params) != 0) {
+        return nullptr;
+    }
+
+    // Copy surface contents (GPU-to-GPU memcpy)
+    if (NvBufSurfaceCopy(surface, new_surface) != 0) {
+        NvBufSurfaceDestroy(new_surface);
+        return nullptr;
+    }
+
+    // Unmap old surface
+    gst_buffer_unmap(buf, &in_out_map);
+
+    // Remove old memory from buffer
+    gst_buffer_remove_all_memory(buf);
+
+    // Wrap new surface in GstMemory with automatic cleanup
+    GstMemory* mem = gst_memory_new_wrapped(
+        (GstMemoryFlags)(GST_MEMORY_FLAG_READONLY | GST_MEMORY_FLAG_NO_SHARE),
+        new_surface,
+        sizeof(NvBufSurface),
+        0,
+        sizeof(NvBufSurface),
+        new_surface,
+        [](gpointer data) { NvBufSurfaceDestroy((NvBufSurface*)data); });
+
+    gst_buffer_append_memory(buf, mem);
+
+    // Re-map the new surface
+    if (!gst_buffer_map(buf, &in_out_map, GST_MAP_READ)) {
+        return nullptr;
+    }
+
+    return (NvBufSurface*)in_out_map.data;
+}
