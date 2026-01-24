@@ -31,7 +31,6 @@ struct InferenceIdsConfig {
     uint64_t detection_uid = 3;
     uint64_t segmentation_uid = 4;
     uint64_t optical_flow_uid = 5;
-    uint64_t optical_flow_concat_uid = 6;  // UID for concatenated preprocessing metadata
 };
 
 // Inference enable flags

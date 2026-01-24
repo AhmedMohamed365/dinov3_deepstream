@@ -127,43 +127,96 @@ bool OpticalFlowPreprocessHandler::concatenate_and_update_meta(
                   << "concat[" << (2*C) << "," << H << "," << W << "]\n";
     }
 
-    // Find the shared preprocessing meta (contains optical_flow_uid=5 in target_unique_ids)
+    // Find the shared preprocessing meta (to copy settings from)
     auto* shared_pbm = find_preprocess_meta_for_uid(batch_meta, config.inference_ids.optical_flow_uid);
     if (!shared_pbm) {
         if (debug) {
-            std::cout << "[OPTICAL_FLOW_PREPROCESS] No preprocessing meta with optical_flow_uid found\n";
+            std::cout << "[OPTICAL_FLOW_PREPROCESS] No shared preprocessing meta found\n";
         }
         return false;
     }
 
-    // DIRECTLY MODIFY the shared metadata's tensor to point to our concatenated features
-    // This works because:
-    // 1. Other branches (depth, detection, segmentation) have already run on previous tensor
-    // 2. Optical flow nvinfer will run next and use this concatenated tensor
-    // 3. The shared metadata already has optical_flow_uid=5 in its target_unique_ids
-
-    if (debug) {
-        std::cout << "[OPTICAL_FLOW_PREPROCESS] Swapping tensor in shared metadata:\n";
-        std::cout << "  Original shape: ["
-                  << shared_pbm->tensor_meta->tensor_shape[0] << ","
-                  << shared_pbm->tensor_meta->tensor_shape[1] << ","
-                  << shared_pbm->tensor_meta->tensor_shape[2] << ","
-                  << shared_pbm->tensor_meta->tensor_shape[3] << "]\n";
-        std::cout << "  New shape: [1," << (2*C) << "," << H << "," << W << "]\n";
+    // Get frame_meta for ROI initialization
+    NvDsFrameMeta* frame_meta = nullptr;
+    for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame; l_frame = l_frame->next) {
+        frame_meta = (NvDsFrameMeta*)l_frame->data;
+        if (frame_meta) break;
+    }
+    if (!frame_meta) {
+        if (debug) std::cout << "[OPTICAL_FLOW_PREPROCESS] No frame meta found\n";
+        return false;
     }
 
-    // Replace the tensor pointer, buffer size, and shape in the SHARED metadata
-    shared_pbm->tensor_meta->raw_tensor_buffer = concat_features_dev;
-    shared_pbm->tensor_meta->buffer_size = concat_features_size;
-
-    // Update tensor shape to [1, 2*C, H, W]
-    shared_pbm->tensor_meta->tensor_shape[1] = 2 * C;  // Double the channel dimension
-    // tensor_shape[0] remains 1 (batch)
-    // tensor_shape[2] and [3] remain H, W (same dimensions)
+    // CRITICAL: Remove optical_flow_uid from shared metadata to prevent it from using wrong tensor
+    auto& targets = shared_pbm->target_unique_ids;
+    targets.erase(
+        std::remove(targets.begin(), targets.end(), config.inference_ids.optical_flow_uid),
+        targets.end()
+    );
 
     if (debug) {
-        std::cout << "[OPTICAL_FLOW_PREPROCESS] Modified shared metadata tensor for optical flow\n";
+        std::cout << "[OPTICAL_FLOW_PREPROCESS] Removed optical_flow_uid from shared metadata\n";
     }
+
+    // Create SEPARATE preprocessing metadata for optical flow
+    auto* new_pbm = new GstNvDsPreProcessBatchMeta();
+    new_pbm->private_data = nullptr;
+    new_pbm->target_unique_ids = {config.inference_ids.optical_flow_uid};
+
+    // Create ROI metadata (full-frame)
+    NvDsRoiMeta roi_meta;
+    std::memset(&roi_meta, 0, sizeof(roi_meta));
+    roi_meta.roi.left = 0;
+    roi_meta.roi.top = 0;
+    roi_meta.roi.width = frame_meta->pipeline_width;
+    roi_meta.roi.height = frame_meta->pipeline_height;
+    roi_meta.scale_ratio_x = 1.0f;
+    roi_meta.scale_ratio_y = 1.0f;
+    roi_meta.offset_left = 0;
+    roi_meta.offset_top = 0;
+    roi_meta.frame_meta = frame_meta;
+    new_pbm->roi_vector.clear();
+    new_pbm->roi_vector.push_back(roi_meta);
+
+    // Create tensor meta with concatenated features
+    new_pbm->tensor_meta = new NvDsPreProcessTensorMeta();
+    new_pbm->tensor_meta->raw_tensor_buffer = concat_features_dev;
+    new_pbm->tensor_meta->buffer_size = concat_features_size;
+    new_pbm->tensor_meta->gpu_id = shared_pbm->tensor_meta->gpu_id;
+    new_pbm->tensor_meta->data_type = shared_pbm->tensor_meta->data_type;
+    new_pbm->tensor_meta->tensor_name = config.layer_names.features;
+    new_pbm->tensor_meta->private_data = nullptr;
+    new_pbm->tensor_meta->meta_id = 0;
+    new_pbm->tensor_meta->maintain_aspect_ratio = FALSE;
+
+    // Set tensor shape: [1, 2*C, H, W]
+    new_pbm->tensor_meta->tensor_shape.clear();
+    new_pbm->tensor_meta->tensor_shape.push_back(1);
+    new_pbm->tensor_meta->tensor_shape.push_back(2 * C);
+    new_pbm->tensor_meta->tensor_shape.push_back(H);
+    new_pbm->tensor_meta->tensor_shape.push_back(W);
+
+    if (debug) {
+        std::cout << "[OPTICAL_FLOW_PREPROCESS] Created separate preprocessing meta: "
+                  << "shape=[1," << (2*C) << "," << H << "," << W << "], "
+                  << "buffer_size=" << concat_features_size << " bytes\n";
+    }
+
+    // Add separate preprocessing metadata to batch
+    NvDsUserMeta* user_meta = nvds_acquire_user_meta_from_pool(batch_meta);
+    if (!user_meta) {
+        delete new_pbm->tensor_meta;
+        delete new_pbm;
+        return false;
+    }
+
+    user_meta->user_meta_data = (void*)new_pbm;
+    user_meta->base_meta.meta_type = (NvDsMetaType)NVDS_PREPROCESS_BATCH_META;
+    user_meta->base_meta.copy_func = preprocess_batchmeta_copy_func;
+    user_meta->base_meta.release_func = preprocess_batchmeta_release_func;
+    user_meta->base_meta.batch_meta = batch_meta;
+
+    nvds_add_user_meta_to_batch(batch_meta, user_meta);
 
     return true;
 }
@@ -469,20 +522,18 @@ GstPadProbeReturn OpticalFlowVisualizationHandler::handle_buffer(
         }
     }
 
-    // The optical flow outputs are attached to the SHARED preprocessing metadata's ROI vector
-    // (because we copied the ROI vector, and nvinfer attaches outputs to the shared ROI objects)
-    // So we look for the shared metadata using depth_uid
-    auto* pbm = find_preprocess_meta_for_uid(batch_meta, config.inference_ids.depth_uid);
+    // Look for the SEPARATE optical flow preprocessing metadata (not the shared one)
+    auto* pbm = find_preprocess_meta_for_uid(batch_meta, config.inference_ids.optical_flow_uid);
     if (!pbm) {
         if (debug) {
-            std::cout << "[OPTICAL_FLOW_VIZ] No shared preprocessing meta found\n";
+            std::cout << "[OPTICAL_FLOW_VIZ] No optical flow preprocessing meta found\n";
         }
         gst_buffer_unmap(buf, &in_map);
         return GST_PAD_PROBE_OK;
     }
 
     if (debug) {
-        std::cout << "[OPTICAL_FLOW_VIZ] Using shared preprocessing meta (UIDs: ";
+        std::cout << "[OPTICAL_FLOW_VIZ] Using optical flow preprocessing meta (UIDs: ";
         for (auto uid : pbm->target_unique_ids) {
             std::cout << uid << " ";
         }
