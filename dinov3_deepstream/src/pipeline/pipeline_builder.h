@@ -28,11 +28,12 @@ private:
 // Helper class for attaching probes to pipeline elements
 class PipelineProbeAttacher {
 public:
-    // Attach probe to a named element's src pad
+    // Attach probe to a named element's src or sink pad
     static bool attach_probe_to_element(
         GstElement* pipeline,
         const char* element_name,
         GstPadProbeCallback callback,
         gpointer user_data,
-        GDestroyNotify destroy_notify);
+        GDestroyNotify destroy_notify,
+        bool attach_to_src = true);  // true = src pad, false = sink pad
 };

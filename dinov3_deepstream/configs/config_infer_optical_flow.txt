@@ -1,0 +1,19 @@
+[property]
+gie-unique-id=5
+
+# optical flow head
+onnx-file=/dinov3_deepstream/dinov3_models/head_optical_flow/model_stacked.onnx
+model-engine-file=/dinov3_deepstream/dinov3_models/head_optical_flow/model_stacked.onnx_b1_gpu0_fp16.engine
+
+gpu-id=0
+batch-size=1
+network-mode=2          # FP16
+process-mode=1          # full-frame (still OK; input is tensor-from-meta)
+network-type=100        # "other"
+output-tensor-meta=1
+
+# IMPORTANT: consume tensor attached on buffer as GstNvDsPreProcessBatchMeta
+input-tensor-from-meta=1
+
+# Output layer name (must match model output and config.layer_names.optical_flow)
+output-blob-names=optical_flow

@@ -57,7 +57,8 @@ GstNvDsPreProcessBatchMeta* DINOv3ProbeHandler::create_preprocess_meta(
     pbm->target_unique_ids = {
         config.inference_ids.depth_uid,
         config.inference_ids.detection_uid,
-        config.inference_ids.segmentation_uid
+        config.inference_ids.segmentation_uid,
+        config.inference_ids.optical_flow_uid
     };
 
     // ROI info (full-frame)

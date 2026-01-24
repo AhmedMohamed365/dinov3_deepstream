@@ -22,9 +22,11 @@ add_executable(dinov3_deepstream
     src/probes/dinov3_probe.cpp
     src/probes/depth_probe.cpp
     src/probes/segmentation_probe.cpp
+    src/probes/optical_flow_probe.cpp
     src/pipeline/pipeline_builder.cpp
     src/utils_cuda/depth.cu
     src/utils_cuda/segmentation.cu
+    src/utils_cuda/optical_flow.cu
 )
 
 set_target_properties(nvdsinfer_custom_detection PROPERTIES

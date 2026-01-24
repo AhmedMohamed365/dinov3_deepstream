@@ -70,6 +70,16 @@ std::string PipelineBuilder::build_inference_branches() {
            << "video/x-raw(memory:NVMM),format=RGBA,width=" << config.pipeline.width
            << ",height=" << config.pipeline.height << " ! "
            << "nvdsosd ! "
+           << "nveglglessink sync=false ";
+    }
+
+    // Optical flow branch
+    if (config.inference_enable.optical_flow) {
+        ss << "t1. ! queue name=q_flow ! "
+           << "nvinfer name=optical_flow config-file-path="
+           << config.model_paths.optical_flow_config << " ! "
+           << "nvvideoconvert name=postflowconv ! "
+           << "video/x-raw(memory:NVMM),format=NV12 ! "
            << "nveglglessink sync=false";
     }
 
@@ -96,7 +106,8 @@ bool PipelineProbeAttacher::attach_probe_to_element(
     const char* element_name,
     GstPadProbeCallback callback,
     gpointer user_data,
-    GDestroyNotify destroy_notify)
+    GDestroyNotify destroy_notify,
+    bool attach_to_src)
 {
     GstElement* element = gst_bin_get_by_name(GST_BIN(pipeline), element_name);
     if (!element) {
@@ -104,15 +115,16 @@ bool PipelineProbeAttacher::attach_probe_to_element(
         return false;
     }
 
-    GstPad* srcpad = gst_element_get_static_pad(element, "src");
-    if (!srcpad) {
-        std::cerr << "Could not get src pad of '" << element_name << "'\n";
+    const char* pad_name = attach_to_src ? "src" : "sink";
+    GstPad* pad = gst_element_get_static_pad(element, pad_name);
+    if (!pad) {
+        std::cerr << "Could not get " << pad_name << " pad of '" << element_name << "'\n";
         gst_object_unref(element);
         return false;
     }
 
-    gst_pad_add_probe(srcpad, GST_PAD_PROBE_TYPE_BUFFER, callback, user_data, destroy_notify);
-    gst_object_unref(srcpad);
+    gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, callback, user_data, destroy_notify);
+    gst_object_unref(pad);
     gst_object_unref(element);
 
     return true;

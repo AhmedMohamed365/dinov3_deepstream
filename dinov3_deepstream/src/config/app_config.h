@@ -21,6 +21,7 @@ struct ModelPathsConfig {
     std::string detection_config = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_detection.txt";
     std::string segmentation_config = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_segmentation.txt";
     std::string segmentation_labels = "/dinov3_deepstream/dinov3_models/head_segmentation/class_names.txt";
+    std::string optical_flow_config = "/dinov3_deepstream/dinov3_deepstream/configs/config_infer_optical_flow.txt";
 };
 
 // Unique IDs for inference elements
@@ -29,6 +30,8 @@ struct InferenceIdsConfig {
     uint64_t depth_uid = 2;
     uint64_t detection_uid = 3;
     uint64_t segmentation_uid = 4;
+    uint64_t optical_flow_uid = 5;
+    uint64_t optical_flow_concat_uid = 6;  // UID for concatenated preprocessing metadata
 };
 
 // Inference enable flags
@@ -36,6 +39,7 @@ struct InferenceEnableConfig {
     bool depth = true;
     bool detection = true;
     bool segmentation = true;
+    bool optical_flow = true;
 };
 
 // Layer names
@@ -43,6 +47,7 @@ struct LayerNamesConfig {
     std::string features = "features";
     std::string depth = "depth";
     std::string semantic_segmentation = "semantic_segmentation";
+    std::string optical_flow = "optical_flow";
 };
 
 // Visualization settings
@@ -73,7 +78,7 @@ struct DepthRangeConfig {
 
 // Debug settings
 struct DebugConfig {
-    bool enabled = false;
+    bool enabled = true;
     uint64_t initial_frames = 10;
     uint64_t periodic_interval = 120;
 };

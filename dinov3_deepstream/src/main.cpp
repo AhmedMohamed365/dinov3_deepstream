@@ -12,6 +12,7 @@
 #include "probes/dinov3_probe.h"
 #include "probes/depth_probe.h"
 #include "probes/segmentation_probe.h"
+#include "probes/optical_flow_probe.h"
 #include "pipeline/pipeline_builder.h"
 
 #include <bits/stdc++.h>
@@ -41,15 +42,20 @@ int main(int argc, char *argv[]) {
       std::string val = argv[++i];
       app_config.inference_enable.segmentation = (val == "true" || val == "1");
     }
+    else if (a == "--do-optical-flow" && i + 1 < argc) {
+      std::string val = argv[++i];
+      app_config.inference_enable.optical_flow = (val == "true" || val == "1");
+    }
     else if (a == "-h" || a == "--help") {
       std::cout << "Usage: " << argv[0] << " [OPTIONS]\n\n"
                 << "Options:\n"
-                << "  --device DEVICE               Video device path (default: /dev/video0)\n"
-                << "  --config CONFIG               DINOv3 config file path\n"
-                << "  --do-depth [true|false]       Enable/disable depth estimation (default: true)\n"
-                << "  --do-detection [true|false]   Enable/disable object detection (default: true)\n"
-                << "  --do-segmentation [true|false] Enable/disable segmentation (default: true)\n"
-                << "  -h, --help                    Show this help message\n";
+                << "  --device DEVICE                  Video device path (default: /dev/video0)\n"
+                << "  --config CONFIG                  DINOv3 config file path\n"
+                << "  --do-depth [true|false]          Enable/disable depth estimation (default: true)\n"
+                << "  --do-detection [true|false]      Enable/disable object detection (default: true)\n"
+                << "  --do-segmentation [true|false]   Enable/disable segmentation (default: true)\n"
+                << "  --do-optical-flow [true|false]   Enable/disable optical flow (default: true)\n"
+                << "  -h, --help                       Show this help message\n";
       return 0;
     }
   }
@@ -124,6 +130,32 @@ int main(int argc, char *argv[]) {
               delete handler;
               delete ctx;
             })) {
+      gst_object_unref(pipeline);
+      return 1;
+    }
+  }
+
+  if (app_config.inference_enable.optical_flow) {
+    // Attach SINK pad probe for preprocessing (concatenates two consecutive features)
+    auto* preprocess_handler = new OpticalFlowPreprocessHandler(app_config);
+    if (!PipelineProbeAttacher::attach_probe_to_element(
+            pipeline, "optical_flow",
+            optical_flow_sink_pad_probe_wrapper,
+            preprocess_handler,
+            [](gpointer data) { delete reinterpret_cast<OpticalFlowPreprocessHandler*>(data); },
+            false)) {  // false = SINK pad
+      gst_object_unref(pipeline);
+      return 1;
+    }
+
+    // Attach SRC pad probe for visualization
+    auto* viz_handler = new OpticalFlowVisualizationHandler(app_config);
+    if (!PipelineProbeAttacher::attach_probe_to_element(
+            pipeline, "optical_flow",
+            optical_flow_src_pad_probe_wrapper,
+            viz_handler,
+            [](gpointer data) { delete reinterpret_cast<OpticalFlowVisualizationHandler*>(data); },
+            true)) {  // true = SRC pad (default)
       gst_object_unref(pipeline);
       return 1;
     }
