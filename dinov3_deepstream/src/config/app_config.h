@@ -3,15 +3,25 @@
 #include <string>
 #include <cstdint>
 
+// Source type enumeration
+enum class SourceType {
+    CAMERA,      // USB/V4L2 camera (e.g., /dev/video0)
+    FILE,        // Video file (mp4, avi, etc.)
+    RTSP,        // RTSP stream
+    URI          // Generic URI (http, file://, etc.)
+};
+
 // Pipeline configuration
 struct PipelineConfig {
-    std::string device = "/dev/video0";
+    SourceType source_type = SourceType::CAMERA;
+    std::string source_uri = "/dev/video0";  // Camera device, file path, or RTSP URL
     int framerate = 30;
     int batch_size = 1;
     int width = 640;
     int height = 640;
-    int live_source = 1;
+    int live_source = 1;             // 1 for live sources (camera, RTSP), 0 for files
     int batched_push_timeout = 40000;
+    bool loop_file = true;           // Loop file playback (only for FILE source)
 };
 
 // Model configuration paths
@@ -77,7 +87,7 @@ struct DepthRangeConfig {
 
 // Debug settings
 struct DebugConfig {
-    bool enabled = false;
+    bool enabled = true;
     uint64_t initial_frames = 10;
     uint64_t periodic_interval = 120;
 };

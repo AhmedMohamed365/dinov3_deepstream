@@ -28,7 +28,37 @@ int main(int argc, char *argv[]) {
   // Parse command-line arguments to override defaults
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
-    if (a == "--device" && i + 1 < argc) app_config.pipeline.device = argv[++i];
+
+    // Source configuration
+    if (a == "--source-type" && i + 1 < argc) {
+      std::string type = argv[++i];
+      if (type == "camera") app_config.pipeline.source_type = SourceType::CAMERA;
+      else if (type == "file") {
+        app_config.pipeline.source_type = SourceType::FILE;
+        app_config.pipeline.live_source = 0;  // Files are not live sources
+      }
+      else if (type == "rtsp") app_config.pipeline.source_type = SourceType::RTSP;
+      else if (type == "uri") {
+        app_config.pipeline.source_type = SourceType::URI;
+        app_config.pipeline.live_source = 0;  // URIs are not live sources
+      }
+      else std::cerr << "Unknown source type: " << type << " (use: camera, file, rtsp, uri)\n";
+    }
+    else if (a == "--source-uri" && i + 1 < argc) {
+      app_config.pipeline.source_uri = argv[++i];
+    }
+    else if (a == "--loop" && i + 1 < argc) {
+      std::string val = argv[++i];
+      app_config.pipeline.loop_file = (val == "true" || val == "1");
+    }
+    else if (a == "--framerate" && i + 1 < argc) {
+      app_config.pipeline.framerate = std::stoi(argv[++i]);
+    }
+    // Legacy argument (kept for backward compatibility)
+    else if (a == "--device" && i + 1 < argc) {
+      app_config.pipeline.source_uri = argv[++i];
+      app_config.pipeline.source_type = SourceType::CAMERA;
+    }
     else if (a == "--config" && i + 1 < argc) app_config.model_paths.dinov3_config = argv[++i];
     else if (a == "--do-depth" && i + 1 < argc) {
       std::string val = argv[++i];
@@ -49,7 +79,11 @@ int main(int argc, char *argv[]) {
     else if (a == "-h" || a == "--help") {
       std::cout << "Usage: " << argv[0] << " [OPTIONS]\n\n"
                 << "Options:\n"
-                << "  --device DEVICE                  Video device path (default: /dev/video0)\n"
+                << "  --source-type TYPE               Source type: camera, file, rtsp, uri (default: camera)\n"
+                << "  --source-uri URI                 Source URI (camera device, file path, or stream URL)\n"
+                << "  --framerate FPS                  Frame rate (default: 30)\n"
+                << "  --loop [true|false]              Loop file playback (default: true)\n"
+                << "  --device DEVICE                  [Legacy] Video device path (default: /dev/video0)\n"
                 << "  --config CONFIG                  DINOv3 config file path\n"
                 << "  --do-depth [true|false]          Enable/disable depth estimation (default: true)\n"
                 << "  --do-detection [true|false]      Enable/disable object detection (default: true)\n"
@@ -61,7 +95,7 @@ int main(int argc, char *argv[]) {
   }
 
   // Convenience aliases for cleaner code
-  std::string device = app_config.pipeline.device;
+  std::string source_uri = app_config.pipeline.source_uri;
   std::string infer_cfg = app_config.model_paths.dinov3_config;
   std::string depth_cfg = app_config.model_paths.depth_config;
   std::string detection_cfg = app_config.model_paths.detection_config;

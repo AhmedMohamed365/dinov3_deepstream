@@ -4,13 +4,60 @@
 
 std::string PipelineBuilder::build_source_branch() {
     std::stringstream ss;
-    ss << "v4l2src device=" << config.pipeline.device << " ! "
-       << "video/x-raw,framerate=" << config.pipeline.framerate << "/1 ! "
-       << "videoconvert ! "
-       << "video/x-raw,format=RGBA ! "
-       << "nvvideoconvert ! "
-       << "video/x-raw(memory:NVMM),format=NV12 ! "
-       << "queue ! mux.sink_0 ";
+
+    switch (config.pipeline.source_type) {
+        case SourceType::CAMERA:
+            // USB/V4L2 camera source
+            ss << "v4l2src device=" << config.pipeline.source_uri << " ! "
+               << "videoconvert ! "
+               << "videorate ! "
+               << "video/x-raw,format=RGBA,framerate=" << config.pipeline.framerate << "/1 ! "
+               << "nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=NV12 ! "
+               << "queue ! mux.sink_0 ";
+            break;
+
+        case SourceType::FILE:
+            // Video file source (mp4, avi, mkv, etc.)
+            ss << "filesrc location=" << config.pipeline.source_uri << " ! ";
+
+            // Auto-detect container format and decode
+            ss << "qtdemux ! h264parse ! nvv4l2decoder ! ";
+
+            // Convert to NV12 on NVMM and force buffer copy for tee branches
+            ss << "nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=NV12 ! "
+               << "identity sync=true ! ";
+
+            // Loop video if enabled
+            if (config.pipeline.loop_file) {
+                ss << "identity eos-after=-1 ! ";  // Infinite loop
+            }
+
+            ss << "queue ! mux.sink_0 ";
+            break;
+
+        case SourceType::RTSP:
+            // RTSP stream source
+            ss << "rtspsrc location=" << config.pipeline.source_uri << " latency=100 ! "
+               << "rtph264depay ! h264parse ! nvv4l2decoder ! "
+               << "videorate ! "
+               << "video/x-raw,framerate=" << config.pipeline.framerate << "/1 ! "
+               << "nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=NV12 ! "
+               << "queue ! mux.sink_0 ";
+            break;
+
+        case SourceType::URI:
+            // Generic URI (auto-detect and decode)
+            ss << "uridecodebin uri=" << config.pipeline.source_uri << " ! "
+               << "videoconvert ! "
+               << "nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=NV12 ! "
+               << "queue ! mux.sink_0 ";
+            break;
+    }
+
     return ss.str();
 }
 
@@ -26,8 +73,11 @@ std::string PipelineBuilder::build_muxer_config() {
 }
 
 std::string PipelineBuilder::build_visualization_branch() {
-    return "tee name=t0 "
-           "t0. ! queue ! nvvideoconvert ! nveglglessink sync=false ";
+    std::stringstream ss;
+    ss << "tee name=t0 "
+       << "t0. ! queue ! nvvideoconvert ! nveglglessink sync="
+       << (config.pipeline.live_source ? "false" : "true") << " ";
+    return ss.str();
 }
 
 std::string PipelineBuilder::build_inference_branches() {
