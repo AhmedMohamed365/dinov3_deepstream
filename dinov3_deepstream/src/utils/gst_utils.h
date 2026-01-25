@@ -31,7 +31,17 @@ static inline size_t elem_size_from_infer_dtype(NvDsInferDataType t) {
     for (int i = 0; i < d.numDims; ++i) v *= (size_t)d.d[i];
     return v;
   }
-  
+
+  // Check if buffer color format is part of NV12 family
+  // Supports standard, extended range, and different color spaces (BT.601, BT.709, BT.2020)
+  static inline bool is_nv12_color_format(NvBufSurfaceColorFormat fmt) {
+    return fmt == NVBUF_COLOR_FORMAT_NV12 ||
+           fmt == NVBUF_COLOR_FORMAT_NV12_ER ||
+           fmt == NVBUF_COLOR_FORMAT_NV12_709 ||
+           fmt == NVBUF_COLOR_FORMAT_NV12_709_ER ||
+           fmt == NVBUF_COLOR_FORMAT_NV12_2020;
+  }
+
   // DeepStream calls copy_func with (data = NvDsUserMeta*).
   static gpointer preprocess_batchmeta_copy_func(gpointer data, gpointer user_data) {
     (void)user_data;

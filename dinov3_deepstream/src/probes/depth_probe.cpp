@@ -125,9 +125,8 @@ bool DepthProbeHandler::process_frame_depth(
 
     NvBufSurfaceParams& sl = surface->surfaceList[b];
 
-    // Validate color format
-    if (sl.colorFormat != NVBUF_COLOR_FORMAT_NV12 &&
-        sl.colorFormat != NVBUF_COLOR_FORMAT_NV12_ER) {
+    // Validate color format - must be NV12 family
+    if (!is_nv12_color_format(sl.colorFormat)) {
         if (debug) {
             std::cout << "[DEPTH/CUDA] frame=" << frame_meta->frame_num
                       << " surface not NV12 (fmt=" << (int)sl.colorFormat << ")\n";

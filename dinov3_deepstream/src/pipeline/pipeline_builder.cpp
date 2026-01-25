@@ -18,23 +18,11 @@ std::string PipelineBuilder::build_source_branch() {
             break;
 
         case SourceType::FILE:
-            // Video file source (mp4, avi, mkv, etc.)
-            ss << "filesrc location=" << config.pipeline.source_uri << " ! ";
-
-            // Auto-detect container format and decode
-            ss << "qtdemux ! h264parse ! nvv4l2decoder ! ";
-
-            // Convert to NV12 on NVMM and force buffer copy for tee branches
-            ss << "nvvideoconvert ! "
-               << "video/x-raw(memory:NVMM),format=NV12 ! "
-               << "identity sync=true ! ";
-
-            // Loop video if enabled
-            if (config.pipeline.loop_file) {
-                ss << "identity eos-after=-1 ! ";  // Infinite loop
-            }
-
-            ss << "queue ! mux.sink_0 ";
+            // Use nvurisrcbin - connect directly to mux like NVIDIA example
+            ss << "nvurisrcbin uri=file://" << config.pipeline.source_uri
+               << " file-loop=" << (config.pipeline.loop_file ? "true" : "false")
+               << " disable-audio=true"
+               << " ! mux.sink_0 ";
             break;
 
         case SourceType::RTSP:

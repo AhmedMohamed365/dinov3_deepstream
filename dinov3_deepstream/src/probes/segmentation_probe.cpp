@@ -148,8 +148,7 @@ bool SegmentationProbeHandler::colorize_frame(
 
     // 2) Overwrite NV12 with segmentation colors
     NvBufSurfaceParams& sl = surface->surfaceList[batch_id];
-    if (sl.colorFormat != NVBUF_COLOR_FORMAT_NV12 &&
-        sl.colorFormat != NVBUF_COLOR_FORMAT_NV12_ER) {
+    if (!is_nv12_color_format(sl.colorFormat)) {
         return false;
     }
 
