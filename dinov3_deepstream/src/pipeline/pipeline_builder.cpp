@@ -27,21 +27,21 @@ std::string PipelineBuilder::build_source_branch() {
 
         case SourceType::RTSP:
             // RTSP stream source
-            ss << "rtspsrc location=" << config.pipeline.source_uri << " latency=100 ! "
-               << "rtph264depay ! h264parse ! nvv4l2decoder ! "
-               << "videorate ! "
-               << "video/x-raw,framerate=" << config.pipeline.framerate << "/1 ! "
-               << "nvvideoconvert ! "
-               << "video/x-raw(memory:NVMM),format=NV12 ! "
+            ss << "nvurisrcbin uri=" << config.pipeline.source_uri
+               << " latency=200"
+               << " rtsp-reconnect-interval=30"
+               << " rtsp-reconnect-attempts=-1"
+               << " disable-audio=true"
+               << " ! queue ! "
+               << "nvvideoconvert ! video/x-raw(memory:NVMM),format=NV12 ! "
                << "queue ! mux.sink_0 ";
             break;
 
         case SourceType::URI:
-            // Generic URI (auto-detect and decode)
-            ss << "uridecodebin uri=" << config.pipeline.source_uri << " ! "
-               << "videoconvert ! "
-               << "nvvideoconvert ! "
-               << "video/x-raw(memory:NVMM),format=NV12 ! "
+            ss << "nvurisrcbin uri=" << config.pipeline.source_uri
+               << " disable-audio=true "
+               << "! queue ! "
+               << "nvvideoconvert ! video/x-raw(memory:NVMM),format=NV12 ! "
                << "queue ! mux.sink_0 ";
             break;
     }
