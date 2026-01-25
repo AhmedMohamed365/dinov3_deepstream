@@ -434,11 +434,11 @@ bool OpticalFlowVisualizationHandler::process_frame_optical_flow(
     uint8_t* y_dev = base;
     uint8_t* uv_dev = base + (size_t)pitchY * (size_t)outH;
 
-    // Launch CUDA kernel
+    // Launch CUDA kernel (color visualization with Middlebury color wheel)
     cudaStream_t stream = 0;
     float max_flow = 20.0f;  // Maximum expected flow magnitude in pixels
 
-    cudaError_t e = optical_flow_to_nv12_grayscale_launch(
+    cudaError_t e = optical_flow_to_nv12_color_launch(
         flow_info.flow_dev, flow_info.width, flow_info.height,
         y_dev, uv_dev,
         outW, outH, pitchY, pitchUV,

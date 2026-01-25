@@ -77,7 +77,7 @@ struct DepthRangeConfig {
 
 // Debug settings
 struct DebugConfig {
-    bool enabled = true;
+    bool enabled = false;
     uint64_t initial_frames = 10;
     uint64_t periodic_interval = 120;
 };
