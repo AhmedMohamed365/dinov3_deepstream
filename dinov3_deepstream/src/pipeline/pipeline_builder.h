@@ -23,6 +23,7 @@ private:
     std::string build_muxer_config();
     std::string build_visualization_branch();
     std::string build_inference_branches();
+    std::string build_tiled_muxer();  // Helper for tiled mode muxer setup
 };
 
 // Helper class for attaching probes to pipeline elements

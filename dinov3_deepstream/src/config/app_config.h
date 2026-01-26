@@ -11,10 +11,17 @@ enum class SourceType {
     URI          // Generic URI (http, file://, etc.)
 };
 
+// Display mode enumeration
+enum class DisplayMode {
+    SEPARATE,  // Each head in a separate window (default)
+    TILED      // All heads tiled in a single window
+};
+
 // Pipeline configuration
 struct PipelineConfig {
     SourceType source_type = SourceType::CAMERA;
     std::string source_uri = "/dev/video0";  // Camera device, file path, or RTSP URL
+    DisplayMode display_mode = DisplayMode::SEPARATE;  // Display mode for output heads
     int framerate = 30;
     int batch_size = 1;
     int width = 640;
@@ -87,9 +94,10 @@ struct DepthRangeConfig {
 
 // Debug settings
 struct DebugConfig {
-    bool enabled = true;
+    bool enabled = false;
     uint64_t initial_frames = 10;
     uint64_t periodic_interval = 120;
+    std::string dot_file_path = "/dinov3_deepstream/dinov3_deepstream/build/pipeline.dot";  // Full path for DOT file (including extension)
 };
 
 // Master configuration structure

@@ -76,6 +76,19 @@ int main(int argc, char *argv[]) {
       std::string val = argv[++i];
       app_config.inference_enable.optical_flow = (val == "true" || val == "1");
     }
+    else if (a == "--display-mode" && i + 1 < argc) {
+      std::string mode = argv[++i];
+      if (mode == "separate") app_config.pipeline.display_mode = DisplayMode::SEPARATE;
+      else if (mode == "tiled") app_config.pipeline.display_mode = DisplayMode::TILED;
+      else std::cerr << "Unknown display mode: " << mode << " (use: separate, tiled)\n";
+    }
+    else if (a == "--debug" && i + 1 < argc) {
+      std::string val = argv[++i];
+      app_config.debug.enabled = (val == "true" || val == "1");
+    }
+    else if (a == "--dot-file" && i + 1 < argc) {
+      app_config.debug.dot_file_path = argv[++i];
+    }
     else if (a == "-h" || a == "--help") {
       std::cout << "Usage: " << argv[0] << " [OPTIONS]\n\n"
                 << "Options:\n"
@@ -85,10 +98,13 @@ int main(int argc, char *argv[]) {
                 << "  --loop [true|false]              Loop file playback (default: true)\n"
                 << "  --device DEVICE                  [Legacy] Video device path (default: /dev/video0)\n"
                 << "  --config CONFIG                  DINOv3 config file path\n"
+                << "  --display-mode MODE              Display mode: separate, tiled (default: separate)\n"
                 << "  --do-depth [true|false]          Enable/disable depth estimation (default: true)\n"
                 << "  --do-detection [true|false]      Enable/disable object detection (default: true)\n"
                 << "  --do-segmentation [true|false]   Enable/disable segmentation (default: true)\n"
                 << "  --do-optical-flow [true|false]   Enable/disable optical flow (default: true)\n"
+                << "  --debug [true|false]             Enable debug mode (default: false)\n"
+                << "  --dot-file PATH                  Path for pipeline DOT file (default: ./pipeline)\n"
                 << "  -h, --help                       Show this help message\n";
       return 0;
     }
@@ -116,10 +132,27 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Set GST_DEBUG_DUMP_DOT_DIR environment variable BEFORE gst_init if debug is enabled
+  if (app_config.debug.enabled) {
+    std::string full_path = app_config.debug.dot_file_path;
+    size_t last_slash = full_path.find_last_of("/\\");
+    std::string dot_dir = (last_slash != std::string::npos) ? full_path.substr(0, last_slash) : ".";
+
+    g_setenv("GST_DEBUG_DUMP_DOT_DIR", dot_dir.c_str(), TRUE);
+    std::cout << "[DEBUG] DOT file directory set to: " << dot_dir << "\n";
+  }
+
   gst_init(&argc, &argv);
 
   // Build and create pipeline
   PipelineBuilder builder(app_config);
+
+  // Print pipeline description if debug is enabled
+  if (app_config.debug.enabled) {
+    std::string pipeline_desc = builder.build_pipeline_description();
+    std::cout << "[DEBUG] Pipeline description:\n" << pipeline_desc << "\n\n";
+  }
+
   GError* error = nullptr;
   GstElement* pipeline = builder.create_pipeline(&error);
   if (!pipeline) {
@@ -197,6 +230,38 @@ int main(int argc, char *argv[]) {
 
   // Run
   gst_element_set_state(pipeline, GST_STATE_PLAYING);
+
+  // Generate DOT file for pipeline visualization if debug is enabled
+  if (app_config.debug.enabled) {
+    std::string full_path = app_config.debug.dot_file_path;
+
+    // Extract directory and filename
+    size_t last_slash = full_path.find_last_of("/\\");
+    std::string dot_dir = (last_slash != std::string::npos) ? full_path.substr(0, last_slash) : ".";
+    std::string filename = (last_slash != std::string::npos) ? full_path.substr(last_slash + 1) : full_path;
+
+    // Remove .dot extension if present (GST_DEBUG_BIN_TO_DOT_FILE adds it automatically)
+    std::string dot_name = filename;
+    if (dot_name.size() > 4 && dot_name.substr(dot_name.size() - 4) == ".dot") {
+      dot_name = dot_name.substr(0, dot_name.size() - 4);
+    }
+
+    // Generate DOT file
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(pipeline), GST_DEBUG_GRAPH_SHOW_ALL, dot_name.c_str());
+
+    // Check if file was created
+    std::string expected_path = dot_dir + "/" + dot_name + ".dot";
+    std::ifstream test_file(expected_path);
+    if (test_file.good()) {
+      std::cout << "[DEBUG] Pipeline DOT file successfully created: " << expected_path << "\n";
+      std::cout << "[DEBUG] Convert to image with: dot -Tpng " << expected_path << " -o " << dot_dir << "/" << dot_name << ".png\n";
+    } else {
+      std::cerr << "[DEBUG] WARNING: DOT file was not created at: " << expected_path << "\n";
+      std::cerr << "[DEBUG] Check that directory exists and is writable: " << dot_dir << "\n";
+      std::cerr << "[DEBUG] GST_DEBUG_DUMP_DOT_DIR is set to: " << (g_getenv("GST_DEBUG_DUMP_DOT_DIR") ? g_getenv("GST_DEBUG_DUMP_DOT_DIR") : "NOT SET") << "\n";
+    }
+    test_file.close();
+  }
 
   GstBus *bus = gst_element_get_bus(pipeline);
   bool running = true;
