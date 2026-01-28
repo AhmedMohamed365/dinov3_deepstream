@@ -236,6 +236,10 @@ static inline const char* class_name(int id) {
  * @param surface Current NvBufSurface pointer
  * @return New NvBufSurface pointer, or nullptr on failure
  */
+// Copies buffer surface only when needed for branch independence
+// Checks buffer memory to detect if surface is shared across branches
+// Single branch: surface not shared, no copy needed (fixes segfault)
+// Multiple branches: surface shared via tee, must copy (prevents mixed frames)
 static inline NvBufSurface* copy_and_replace_buffer_surface(
     GstBuffer* buf,
     GstMapInfo& in_out_map,
@@ -243,6 +247,17 @@ static inline NvBufSurface* copy_and_replace_buffer_surface(
 {
     if (!buf || !surface) return nullptr;
 
+    // Check if buffer memory is actually shared (tee shares memory across branches)
+    // If memory is writable, it's not shared - single branch, no copy needed
+    if (gst_buffer_n_memory(buf) == 1) {
+        GstMemory* mem = gst_buffer_peek_memory(buf, 0);
+        if (mem && gst_memory_is_writable(mem)) {
+            // Memory is exclusive to this branch - no copy needed
+            return surface;
+        }
+    }
+
+    // Memory is shared across branches - need independent copy
     // Create new surface with identical parameters
     NvBufSurface* new_surface = nullptr;
     NvBufSurfaceCreateParams create_params{};
@@ -267,12 +282,12 @@ static inline NvBufSurface* copy_and_replace_buffer_surface(
     // Unmap old surface
     gst_buffer_unmap(buf, &in_out_map);
 
-    // Remove old memory from buffer
+    // Buffer is shared - remove old memory and replace with copy
     gst_buffer_remove_all_memory(buf);
 
-    // Wrap new surface in GstMemory with automatic cleanup
+    // Wrap new surface - REMOVED READONLY to allow downstream writes
     GstMemory* mem = gst_memory_new_wrapped(
-        (GstMemoryFlags)(GST_MEMORY_FLAG_READONLY | GST_MEMORY_FLAG_NO_SHARE),
+        GST_MEMORY_FLAG_NO_SHARE,  // Keep NO_SHARE, removed READONLY
         new_surface,
         sizeof(NvBufSurface),
         0,
@@ -282,8 +297,8 @@ static inline NvBufSurface* copy_and_replace_buffer_surface(
 
     gst_buffer_append_memory(buf, mem);
 
-    // Re-map the new surface
-    if (!gst_buffer_map(buf, &in_out_map, GST_MAP_READ)) {
+    // Re-map with READWRITE to allow downstream modifications
+    if (!gst_buffer_map(buf, &in_out_map, GST_MAP_READWRITE)) {
         return nullptr;
     }
 
