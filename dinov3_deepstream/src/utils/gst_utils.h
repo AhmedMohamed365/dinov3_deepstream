@@ -19,9 +19,6 @@ static inline size_t elem_size_from_infer_dtype(NvDsInferDataType t) {
       case NvDsInferDataType::HALF:  return 2;
       case NvDsInferDataType::INT8:  return 1;
       case NvDsInferDataType::INT32: return 4;
-  #ifdef NvDsInferDataType::BOOL
-      case NvDsInferDataType::BOOL:  return 1;
-  #endif
       default: return 0;
     }
   }
@@ -57,7 +54,7 @@ static inline size_t elem_size_from_infer_dtype(NvDsInferDataType t) {
     if (src->tensor_meta) {
       dst->tensor_meta = new NvDsPreProcessTensorMeta();
       *(dst->tensor_meta) = *(src->tensor_meta);   // std::string + std::vector copy OK
-      // NOTE: raw_tensor_buffer pointer is copied as-is (we want the same GPU pointer).
+      // raw_tensor_buffer pointer is copied as-is (same GPU pointer).
     } else {
       dst->tensor_meta = nullptr;
     }
@@ -236,10 +233,7 @@ static inline const char* class_name(int id) {
  * @param surface Current NvBufSurface pointer
  * @return New NvBufSurface pointer, or nullptr on failure
  */
-// Copies buffer surface only when needed for branch independence
-// Checks buffer memory to detect if surface is shared across branches
-// Single branch: surface not shared, no copy needed (fixes segfault)
-// Multiple branches: surface shared via tee, must copy (prevents mixed frames)
+// Copies buffer surface when shared across tee branches
 static inline NvBufSurface* copy_and_replace_buffer_surface(
     GstBuffer* buf,
     GstMapInfo& in_out_map,
@@ -247,8 +241,7 @@ static inline NvBufSurface* copy_and_replace_buffer_surface(
 {
     if (!buf || !surface) return nullptr;
 
-    // Check if buffer memory is actually shared (tee shares memory across branches)
-    // If memory is writable, it's not shared - single branch, no copy needed
+    // Check if memory is writable (not shared across tee branches)
     if (gst_buffer_n_memory(buf) == 1) {
         GstMemory* mem = gst_buffer_peek_memory(buf, 0);
         if (mem && gst_memory_is_writable(mem)) {
@@ -285,9 +278,9 @@ static inline NvBufSurface* copy_and_replace_buffer_surface(
     // Buffer is shared - remove old memory and replace with copy
     gst_buffer_remove_all_memory(buf);
 
-    // Wrap new surface - REMOVED READONLY to allow downstream writes
+    // Wrap new surface with NO_SHARE flag
     GstMemory* mem = gst_memory_new_wrapped(
-        GST_MEMORY_FLAG_NO_SHARE,  // Keep NO_SHARE, removed READONLY
+        GST_MEMORY_FLAG_NO_SHARE,
         new_surface,
         sizeof(NvBufSurface),
         0,

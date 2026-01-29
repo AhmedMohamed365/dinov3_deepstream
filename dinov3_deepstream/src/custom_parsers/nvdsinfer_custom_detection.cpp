@@ -104,12 +104,10 @@ extern "C" bool NvDsInferParseCustomDetection(
     Hs[l] = h; Ws[l] = w;
   }
 
-  // ---- IMPORTANT: image size used for decoding centers ----
-  //
-  // Because your head consumes *features* (not images), networkInfo.width/height
-  // may NOT reflect the original image resolution.
-  //
-  // So we allow overriding with env vars:
+  // Image size used for decoding centers
+  // networkInfo.width/height may not reflect original image resolution
+  // when the head consumes features instead of images.
+  // Override with env vars:
   //   FCOS_IMG_W=800 FCOS_IMG_H=800
   //
   // If networkInfo seems too small, we default to 800.
@@ -195,5 +193,5 @@ extern "C" bool NvDsInferParseCustomDetection(
   return true;
 }
 
-// Ensures the function signature matches what DeepStream expects.
+// Verify function signature
 CHECK_CUSTOM_PARSE_FUNC_PROTOTYPE(NvDsInferParseCustomDetection);

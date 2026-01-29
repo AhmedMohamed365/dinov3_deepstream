@@ -147,7 +147,7 @@ bool OpticalFlowPreprocessHandler::concatenate_and_update_meta(
         return false;
     }
 
-    // CRITICAL: Remove optical_flow_uid from shared metadata to prevent it from using wrong tensor
+    // Remove optical_flow_uid from shared metadata to prevent it from using wrong tensor
     auto& targets = shared_pbm->target_unique_ids;
     targets.erase(
         std::remove(targets.begin(), targets.end(), config.inference_ids.optical_flow_uid),
@@ -330,8 +330,8 @@ bool OpticalFlowVisualizationHandler::extract_optical_flow_tensor(
         return false;
     }
 
-    // Find optical flow tensor meta in ROI user meta list (like depth probe does)
-    // When using input-tensor-from-meta, nvinfer attaches outputs to ROI's user_meta_list
+    // Find optical flow tensor meta in ROI user meta list
+    // nvinfer attaches outputs to ROI's user_meta_list when using input-tensor-from-meta
     if (debug) {
         std::cout << "[OPTICAL_FLOW_VIZ] ROI vector size: " << pbm->roi_vector.size() << "\n";
         for (size_t r = 0; r < pbm->roi_vector.size(); ++r) {

@@ -211,7 +211,7 @@ GstPadProbeReturn DepthProbeHandler::handle_buffer(
         return GST_PAD_PROBE_OK;
     }
 
-    // CRITICAL: Copy surface to ensure independence from other branches
+    // Copy surface to ensure independence from other branches
     // The tee element shares the same NvBufSurface across branches
     surface = copy_and_replace_buffer_surface(buf, in_map, surface);
     if (!surface) {
