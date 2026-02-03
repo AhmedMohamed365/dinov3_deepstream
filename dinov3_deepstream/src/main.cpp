@@ -47,10 +47,6 @@ int main(int argc, char *argv[]) {
     else if (a == "--source-uri" && i + 1 < argc) {
       app_config.pipeline.source_uri = argv[++i];
     }
-    else if (a == "--loop" && i + 1 < argc) {
-      std::string val = argv[++i];
-      app_config.pipeline.loop_file = (val == "true" || val == "1");
-    }
     else if (a == "--framerate" && i + 1 < argc) {
       app_config.pipeline.framerate = std::stoi(argv[++i]);
     }
@@ -95,7 +91,6 @@ int main(int argc, char *argv[]) {
                 << "  --source-type TYPE               Source type: camera, file, rtsp, uri (default: camera)\n"
                 << "  --source-uri URI                 Source URI (camera device, file path, or stream URL)\n"
                 << "  --framerate FPS                  Frame rate (default: 30)\n"
-                << "  --loop [true|false]              Loop file playback (default: true)\n"
                 << "  --device DEVICE                  [Legacy] Video device path (default: /dev/video0)\n"
                 << "  --config CONFIG                  DINOv3 config file path\n"
                 << "  --display-mode MODE              Display mode: separate, tiled (default: separate)\n"

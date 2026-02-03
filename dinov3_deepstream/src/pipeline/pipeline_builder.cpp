@@ -19,9 +19,7 @@ std::string PipelineBuilder::build_source_branch() {
             break;
 
         case SourceType::FILE:
-            // Use nvurisrcbin - connect directly to mux like NVIDIA example
             ss << "nvurisrcbin uri=file://" << config.pipeline.source_uri
-               << " file-loop=" << (config.pipeline.loop_file ? "true" : "false")
                << " disable-audio=true"
                << " ! mux.sink_0 ";
             break;

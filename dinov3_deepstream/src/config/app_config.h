@@ -28,7 +28,6 @@ struct PipelineConfig {
     int height = 640;
     int live_source = 1;             // 1 for live sources (camera, RTSP), 0 for files
     int batched_push_timeout = 40000;
-    bool loop_file = true;           // Loop file playback (only for FILE source)
 };
 
 // Model configuration paths
