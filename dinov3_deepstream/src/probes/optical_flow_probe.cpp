@@ -478,29 +478,29 @@ GstPadProbeReturn OpticalFlowVisualizationHandler::handle_buffer(
     const bool debug = should_debug();
 
     if (!ensure_buffer_writable(info)) {
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
-    if (!buf) return GST_PAD_PROBE_OK;
+    if (!buf) return GST_PAD_PROBE_DROP;
 
     NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
-    if (!batch_meta) return GST_PAD_PROBE_OK;
+    if (!batch_meta) return GST_PAD_PROBE_DROP;
 
     GstMapInfo in_map{};
     NvBufSurface* surface = map_buffer(buf, in_map);
-    if (!surface) return GST_PAD_PROBE_OK;
+    if (!surface) return GST_PAD_PROBE_DROP;
 
     if (!validate_surface(surface, debug)) {
         gst_buffer_unmap(buf, &in_map);
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     // Copy surface to ensure independence from other branches
     surface = copy_and_replace_buffer_surface(buf, in_map, surface);
     if (!surface) {
         if (debug) std::cerr << "[OPTICAL_FLOW_VIZ] Failed to copy surface\n";
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     // Debug: List all preprocessing metadata and their UIDs
@@ -528,7 +528,7 @@ GstPadProbeReturn OpticalFlowVisualizationHandler::handle_buffer(
             std::cout << "[OPTICAL_FLOW_VIZ] No optical flow preprocessing meta found\n";
         }
         gst_buffer_unmap(buf, &in_map);
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     if (debug) {

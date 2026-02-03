@@ -203,11 +203,11 @@ GstPadProbeReturn DepthProbeHandler::handle_buffer(
 
     GstMapInfo in_map{};
     NvBufSurface* surface = map_buffer(buf, in_map);
-    if (!surface) return GST_PAD_PROBE_OK;
+    if (!surface) return GST_PAD_PROBE_DROP;
 
     if (!validate_surface(surface, debug)) {
         gst_buffer_unmap(buf, &in_map);
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     // Copy surface to ensure independence from other branches
@@ -215,7 +215,7 @@ GstPadProbeReturn DepthProbeHandler::handle_buffer(
     surface = copy_and_replace_buffer_surface(buf, in_map, surface);
     if (!surface) {
         if (debug) std::cerr << "[DEPTH] Failed to copy surface\n";
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     auto* pbm = find_preprocess_meta_for_uid(batch_meta, config.inference_ids.depth_uid);
@@ -224,7 +224,7 @@ GstPadProbeReturn DepthProbeHandler::handle_buffer(
             std::cout << "[DEPTH/CUDA] no NVDS_PREPROCESS_BATCH_META for depth uid\n";
         }
         gst_buffer_unmap(buf, &in_map);
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     int updated = 0;

@@ -296,25 +296,25 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
 
     GstMapInfo in_map{};
     NvBufSurface* surface = map_buffer(buf, in_map);
-    if (!surface) return GST_PAD_PROBE_OK;
+    if (!surface) return GST_PAD_PROBE_DROP;
 
     auto* pbm = find_preprocess_meta_for_uid(batch_meta,
                                             context->config.inference_ids.segmentation_uid);
     if (!pbm) {
         gst_buffer_unmap(buf, &in_map);
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     if (surface->memType != NVBUF_MEM_CUDA_DEVICE) {
         gst_buffer_unmap(buf, &in_map);
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     // Copy surface to ensure independence from other branches
     // The tee element shares the same NvBufSurface across branches
     surface = copy_and_replace_buffer_surface(buf, in_map, surface);
     if (!surface) {
-        return GST_PAD_PROBE_OK;
+        return GST_PAD_PROBE_DROP;
     }
 
     cudaStream_t stream = 0;
