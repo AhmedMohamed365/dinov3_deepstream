@@ -21,7 +21,7 @@ enum class DisplayMode {
 struct PipelineConfig {
     SourceType source_type = SourceType::CAMERA;
     std::string source_uri = "/dev/video0";  // Camera device, file path, or RTSP URL
-    DisplayMode display_mode = DisplayMode::SEPARATE;  // Display mode for output heads
+    DisplayMode display_mode = DisplayMode::TILED;  // Display mode for output heads
     int framerate = 30;
     int batch_size = 1;
     int width = 640;

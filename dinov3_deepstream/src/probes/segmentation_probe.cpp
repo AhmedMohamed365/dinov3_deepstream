@@ -348,6 +348,18 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
         add_label_overlays(batch_meta, fmeta, seg_info, outW, outH, stream);
     }
 
+    // Clear object metadata to prevent nvdsosd from drawing detection boxes
+    for (NvDsMetaList* l_frame = batch_meta->frame_meta_list;
+         l_frame;
+         l_frame = l_frame->next)
+    {
+        NvDsFrameMeta* fmeta = (NvDsFrameMeta*)l_frame->data;
+        if (fmeta && fmeta->obj_meta_list) {
+            nvds_clear_obj_meta_list(fmeta, fmeta->obj_meta_list);
+            fmeta->obj_meta_list = nullptr;
+        }
+    }
+
     nvds_release_meta_lock(batch_meta);
     gst_buffer_unmap(buf, &in_map);
     return GST_PAD_PROBE_OK;
