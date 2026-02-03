@@ -2,7 +2,7 @@
 
 #include "utils/gst_headers.h"
 #include "config/app_config.h"
-#include "utils_cuda/depth.h"
+#include "utils_cuda/depth_percentile.h"
 
 // Depth probe handler
 // Visualizes depth maps by converting them to NV12 colormap

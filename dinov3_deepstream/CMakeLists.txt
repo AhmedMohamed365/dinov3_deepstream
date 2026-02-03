@@ -25,6 +25,7 @@ add_executable(dinov3_deepstream
     src/probes/optical_flow_probe.cpp
     src/pipeline/pipeline_builder.cpp
     src/utils_cuda/depth.cu
+    src/utils_cuda/depth_percentile.cu
     src/utils_cuda/segmentation.cu
     src/utils_cuda/optical_flow.cu
 )

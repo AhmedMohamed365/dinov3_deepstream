@@ -144,13 +144,12 @@ bool DepthProbeHandler::process_frame_depth(
     uint8_t* y_dev = base;
     uint8_t* uv_dev = base + (size_t)pitchY * (size_t)outH;
 
-    // Launch CUDA kernel
+    // Launch CUDA kernel (percentile-based colormap)
     cudaStream_t stream = 0;
-    cudaError_t e = depth_to_nv12_colormap_launch(
+    cudaError_t e = depth_to_nv12_colormap_percentile_launch(
         depth_info.depth_dev, depth_info.width, depth_info.height,
         y_dev, uv_dev,
         outW, outH, pitchY, pitchUV,
-        config.depth_range.near_m, config.depth_range.far_m,
         stream);
 
     if (e != cudaSuccess) {
