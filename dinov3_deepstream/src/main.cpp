@@ -13,6 +13,8 @@
 #include "probes/depth_probe.h"
 #include "probes/segmentation_probe.h"
 #include "probes/optical_flow_probe.h"
+
+#include <filesystem>
 #include "pipeline/pipeline_builder.h"
 
 #include <bits/stdc++.h>
@@ -102,6 +104,16 @@ int main(int argc, char *argv[]) {
                 << "  --dot-file PATH                  Path for pipeline DOT file (default: ./pipeline)\n"
                 << "  -h, --help                       Show this help message\n";
       return 0;
+    }
+  }
+
+  // Convert relative file paths to absolute paths
+  if (app_config.pipeline.source_type == SourceType::FILE) {
+    namespace fs = std::filesystem;
+    fs::path file_path(app_config.pipeline.source_uri);
+    if (file_path.is_relative()) {
+      file_path = fs::absolute(file_path);
+      app_config.pipeline.source_uri = file_path.string();
     }
   }
 

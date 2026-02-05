@@ -29,15 +29,7 @@ This project complements [dinov3_ros](https://github.com/Raessan/dinov3_ros), pr
 
 ## Installation
 
-### Prerequisites
-
-- NVIDIA GPU with CUDA support (compute capability 7.0+)
-- Ubuntu 20.04/22.04
-- CUDA Toolkit 11.4+ or 12.x
-- NVIDIA DeepStream SDK 8.0 (or compatible version)
-- GStreamer 1.0 development libraries
-
-### Install Dependencies
+### Dependencies
 
 1. **Install CUDA Toolkit**
    
@@ -69,13 +61,12 @@ You need to obtain model weights for both the DINOv3 backbone and the task-speci
 
 1. **DINOv3 Backbone**: Request and download weights from the [official DINOv3 repo](https://github.com/facebookresearch/dinov3). Export the model to ONNX/TensorRT format compatible with DeepStream.
 
-2. **Task-specific Heads**: Obtain ONNX models from the following repositories (trained with `vits16plus` backbone):
+2. **Task-specific Heads**: This repo contains the ONNX models of each subtask. They can also be obtained from the following repositories (trained with `vits16plus` backbone):
    - Detection: [object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3)
    - Segmentation: [semantic_segmentation_dinov3](https://github.com/Raessan/semantic_segmentation_dinov3)
    - Depth: [depth_dinov3](https://github.com/Raessan/depth_dinov3)
    - Optical Flow: [optical_flow_dinov3](https://github.com/Raessan/optical_flow_dinov3)
-
-3. Place the TensorRT engine files in the appropriate directories and update the config files in `dinov3_deepstream/configs/`.
+Users are encouraged to improve the performance of any task by training and using their own ONNX models!
 
 ## Docker
 
@@ -112,7 +103,7 @@ Run the application from the `build` directory:
 - `--source-type TYPE`: Input source type: `camera`, `file`, `rtsp`, `uri` (default: `camera`)
 - `--source-uri URI`: Source URI (device path, file path, or stream URL)
   - Camera: `/dev/video0`
-  - File: `/path/to/video.mp4`
+  - File: `/path/to/video.mp4` or `./video.mp4` (absolute or relative paths)
   - RTSP: `rtsp://192.168.1.100:8554/stream`
 - `--framerate FPS`: Frame rate for processing (default: `30`)
 - `--display-mode MODE`: Display mode: `separate`, `tiled` (default: `tiled`)
