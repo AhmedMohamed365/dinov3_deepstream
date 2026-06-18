@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
         build-essential \
         pkg-config \
+        libgstrtspserver-1.0-dev \
+        gstreamer1.0-rtsp \
     && rm -rf /var/lib/apt/lists/*
 
 

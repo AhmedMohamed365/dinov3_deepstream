@@ -4,3 +4,4 @@ video_samples
 
 # Files of onnx models
 dinov3_models/backbone
+sample.mp4

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <iostream>
 
 // DeepStream uses this struct for decoded boxes. :contentReference[oaicite:1]{index=1}
 
@@ -53,6 +54,18 @@ extern "C" bool NvDsInferParseCustomDetection(
     const NvDsInferParseDetectionParams& detectionParams,
     std::vector<NvDsInferParseObjectInfo>& objectList)
 {
+  static int call_count = 0;
+  call_count++;
+  bool should_log = (call_count % 30 == 0);
+  if (should_log) {
+    std::cerr << "[DEBUG DETECTOR] NvDsInferParseCustomDetection called. layers=" << outputLayersInfo.size() << std::endl;
+    for (const auto& l : outputLayersInfo) {
+      std::cerr << "  layer: name=" << (l.layerName ? l.layerName : "null") << " dims=[" ;
+      for (int d=0; d<l.inferDims.numDims; ++d) std::cerr << l.inferDims.d[d] << ",";
+      std::cerr << "]" << std::endl;
+    }
+  }
+
   // ---- Find the 9 expected outputs by name ----
   const NvDsInferLayerInfo* cls1 = find_layer(outputLayersInfo, "cls1");
   const NvDsInferLayerInfo* cls2 = find_layer(outputLayersInfo, "cls2");
@@ -67,7 +80,9 @@ extern "C" bool NvDsInferParseCustomDetection(
   const NvDsInferLayerInfo* ctr3 = find_layer(outputLayersInfo, "ctr3");
 
   if (!cls1 || !cls2 || !cls3 || !reg1 || !reg2 || !reg3 || !ctr1 || !ctr2 || !ctr3) {
-    // Layer names must match what TensorRT reports.
+    if (should_log) {
+      std::cerr << "[DEBUG DETECTOR] ERROR: One or more required output layers (cls1-3, reg1-3, ctr1-3) were NOT found!" << std::endl;
+    }
     return false;
   }
 
@@ -118,6 +133,7 @@ extern "C" bool NvDsInferParseCustomDetection(
 
   // Thresholds: DeepStream supplies per-class precluster thresholds here. :contentReference[oaicite:2]{index=2}
   const int numClasses = std::min((int)detectionParams.numClassesConfigured, C);
+  float max_score_seen = 0.0f;
 
   // Decode per level
   for (int lvl = 0; lvl < 3; ++lvl) {
@@ -150,6 +166,10 @@ extern "C" bool NvDsInferParseCustomDetection(
           }
         }
         if (bestC < 0) continue;
+
+        if (bestScore > max_score_seen) {
+          max_score_seen = bestScore;
+        }
 
         const float thr = detectionParams.perClassPreclusterThreshold[bestC];
         if (bestScore < thr) continue;
@@ -188,6 +208,10 @@ extern "C" bool NvDsInferParseCustomDetection(
         objectList.push_back(obj);
       }
     }
+  }
+
+  if (should_log) {
+    std::cerr << "[DEBUG DETECTOR] Max confidence score seen in this call: " << max_score_seen << std::endl;
   }
 
   return true;

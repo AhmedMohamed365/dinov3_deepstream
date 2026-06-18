@@ -23,6 +23,52 @@
 #include <string>
 #include <vector>
 
+#include <gst/rtsp-server/rtsp-server.h>
+
+struct BusCallData {
+  GMainLoop *loop;
+  GstElement *pipeline;
+};
+
+static gboolean bus_call(GstBus *bus, GstMessage *msg, gpointer data) {
+  BusCallData *bus_data = (BusCallData *)data;
+  GMainLoop *loop = bus_data->loop;
+  GstElement *pipeline = bus_data->pipeline;
+  switch (GST_MESSAGE_TYPE(msg)) {
+    case GST_MESSAGE_EOS: {
+      std::cout << "End of stream reached. Seeking back to start for looping...\n";
+      if (pipeline) {
+        if (!gst_element_seek(pipeline, 1.0, GST_FORMAT_TIME,
+                              (GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT),
+                              GST_SEEK_TYPE_SET, 0,
+                              GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE)) {
+          std::cerr << "Failed to seek to start of stream. Exiting...\n";
+          g_main_loop_quit(loop);
+        }
+      } else {
+        g_main_loop_quit(loop);
+      }
+      break;
+    }
+    case GST_MESSAGE_ERROR: {
+      gchar *debug = nullptr;
+      GError *error = nullptr;
+      gst_message_parse_error(msg, &error, &debug);
+      std::cerr << "GStreamer ERROR: " << (error ? error->message : "unknown") << "\n";
+      if (debug) {
+        std::cerr << "Debug: " << debug << "\n";
+        g_free(debug);
+      }
+      if (error) g_error_free(error);
+      g_main_loop_quit(loop);
+      break;
+    }
+    default:
+      break;
+  }
+  return TRUE;
+}
+
 int main(int argc, char *argv[]) {
   // Create default configuration
   AppConfig app_config = AppConfig::create_default();
@@ -87,6 +133,16 @@ int main(int argc, char *argv[]) {
     else if (a == "--dot-file" && i + 1 < argc) {
       app_config.debug.dot_file_path = argv[++i];
     }
+    else if (a == "--rtsp-output" && i + 1 < argc) {
+      std::string val = argv[++i];
+      app_config.pipeline.rtsp_output = (val == "true" || val == "1");
+    }
+    else if (a == "--rtsp-port" && i + 1 < argc) {
+      app_config.pipeline.rtsp_port = std::stoi(argv[++i]);
+    }
+    else if (a == "--rtsp-mount" && i + 1 < argc) {
+      app_config.pipeline.rtsp_mount = argv[++i];
+    }
     else if (a == "-h" || a == "--help") {
       std::cout << "Usage: " << argv[0] << " [OPTIONS]\n\n"
                 << "Options:\n"
@@ -102,6 +158,9 @@ int main(int argc, char *argv[]) {
                 << "  --do-optical-flow [true|false]   Enable/disable optical flow (default: true)\n"
                 << "  --debug [true|false]             Enable debug mode (default: false)\n"
                 << "  --dot-file PATH                  Path for pipeline DOT file (default: ./pipeline)\n"
+                << "  --rtsp-output [true|false]       Enable/disable RTSP streaming output instead of windows (default: true)\n"
+                << "  --rtsp-port PORT                 RTSP server port (default: 554)\n"
+                << "  --rtsp-mount MOUNT               RTSP mount path (default: /ds-test)\n"
                 << "  -h, --help                       Show this help message\n";
       return 0;
     }
@@ -235,6 +294,15 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Create GMainLoop
+  GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+
+  // Attach bus watch callback
+  GstBus *bus = gst_element_get_bus(pipeline);
+  BusCallData bus_data = {loop, pipeline};
+  guint bus_watch_id = gst_bus_add_watch(bus, bus_call, &bus_data);
+  gst_object_unref(bus);
+
   // Run
   gst_element_set_state(pipeline, GST_STATE_PLAYING);
 
@@ -270,38 +338,73 @@ int main(int argc, char *argv[]) {
     test_file.close();
   }
 
-  GstBus *bus = gst_element_get_bus(pipeline);
-  bool running = true;
-  while (running) {
-    GstMessage *msg = gst_bus_timed_pop_filtered(
-        bus, GST_CLOCK_TIME_NONE,
-        (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+  // Start RTSP server if enabled
+  GstRTSPServer *rtsp_server = nullptr;
+  if (app_config.pipeline.rtsp_output) {
+    rtsp_server = gst_rtsp_server_new();
+    std::string port_str = std::to_string(app_config.pipeline.rtsp_port);
+    g_object_set(G_OBJECT(rtsp_server), "service", port_str.c_str(), NULL);
 
-    if (!msg) continue;
+    GstRTSPMountPoints *mounts = gst_rtsp_server_get_mount_points(rtsp_server);
 
-    switch (GST_MESSAGE_TYPE(msg)) {
-      case GST_MESSAGE_ERROR: {
-        GError *err = nullptr;
-        gchar *dbg = nullptr;
-        gst_message_parse_error(msg, &err, &dbg);
-        std::cerr << "GStreamer ERROR: " << (err ? err->message : "unknown") << "\n";
-        if (dbg) std::cerr << "Debug: " << dbg << "\n";
-        if (err) g_error_free(err);
-        if (dbg) g_free(dbg);
-        running = false;
-        break;
-      }
-      case GST_MESSAGE_EOS:
-        running = false;
-        break;
-      default:
-        break;
+    // Helper lambda to register a mount point
+    auto register_mount = [&](const std::string& path, int port) {
+      GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
+      std::string launch = "( udpsrc port=" + std::to_string(port) + 
+                           " do-timestamp=true caps=\"application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)H264, payload=(int)96\" ! rtph264depay ! h264parse ! rtph264pay name=pay0 pt=96 config-interval=1 )";
+      gst_rtsp_media_factory_set_launch(factory, launch.c_str());
+      gst_rtsp_media_factory_set_shared(factory, TRUE);
+      gst_rtsp_mount_points_add_factory(mounts, path.c_str(), factory);
+    };
+
+    // Register the main mount (Tiled or Original stream on port 5400)
+    register_mount(app_config.pipeline.rtsp_mount, 5400);
+
+    // Register individual mounts if their inference is enabled
+    if (app_config.inference_enable.depth) {
+      register_mount("/depth", 5401);
     }
-    gst_message_unref(msg);
+    if (app_config.inference_enable.detection) {
+      register_mount("/detection", 5402);
+    }
+    if (app_config.inference_enable.segmentation) {
+      register_mount("/segmentation", 5403);
+    }
+    if (app_config.inference_enable.optical_flow) {
+      register_mount("/optical-flow", 5404);
+    }
+
+    g_object_unref(mounts);
+
+    if (gst_rtsp_server_attach(rtsp_server, NULL) == 0) {
+      std::cerr << "Failed to attach RTSP server to main context\n";
+      return 1;
+    }
+
+    std::cout << "\n*** RTSP Streams ready at: ***\n";
+    std::cout << "  Main Stream (Tiled/Original): rtsp://127.0.0.1:" << port_str << app_config.pipeline.rtsp_mount << "\n";
+    if (app_config.inference_enable.depth)
+      std::cout << "  Depth Map:                    rtsp://127.0.0.1:" << port_str << "/depth\n";
+    if (app_config.inference_enable.detection)
+      std::cout << "  Object Detection:             rtsp://127.0.0.1:" << port_str << "/detection\n";
+    if (app_config.inference_enable.segmentation)
+      std::cout << "  Segmentation:                 rtsp://127.0.0.1:" << port_str << "/segmentation\n";
+    if (app_config.inference_enable.optical_flow)
+      std::cout << "  Optical Flow:                 rtsp://127.0.0.1:" << port_str << "/optical-flow\n";
+    std::cout << "*****************************\n\n";
   }
 
-  gst_object_unref(bus);
+  // Run GMainLoop
+  g_main_loop_run(loop);
+
+  // Cleanup
+  g_source_remove(bus_watch_id);
+  if (rtsp_server) {
+    g_object_unref(rtsp_server);
+  }
   gst_element_set_state(pipeline, GST_STATE_NULL);
   gst_object_unref(pipeline);
+  g_main_loop_unref(loop);
+
   return 0;
 }

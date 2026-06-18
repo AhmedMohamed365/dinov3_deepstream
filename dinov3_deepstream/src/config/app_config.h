@@ -28,6 +28,9 @@ struct PipelineConfig {
     int height = 640;
     int live_source = 1;             // 1 for live sources (camera, RTSP), 0 for files
     int batched_push_timeout = 40000;
+    bool rtsp_output = true;         // True to stream detection via RTSP, false to display
+    int rtsp_port = 554;             // Port for RTSP server
+    std::string rtsp_mount = "/ds-test"; // Mount point for RTSP stream
 };
 
 // Model configuration paths

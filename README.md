@@ -114,26 +114,48 @@ Run the application from the `build` directory:
 - `--debug [true|false]`: Enable debug mode with pipeline visualization (default: `false`)
 - `--dot-file PATH`: Path for pipeline DOT file (default: `./pipeline`)
 - `--config CONFIG`: Path to DINOv3 config file (overrides default)
+- `--rtsp-output [true|false]`: Enable/disable streaming via RTSP (default: `true`)
+- `--rtsp-port PORT`: RTSP server listening port (default: `554`)
+- `--rtsp-mount PATH`: RTSP stream mount path (default: `/ds-test`)
 - `-h, --help`: Show help message
 
 ### Examples
 
-**Run with USB camera (all tasks enabled):**
+**Run RTSP streaming with tiled visual output (default):**
 ```bash
-./dinov3_deepstream --source-type camera --source-uri /dev/video0
+./dinov3_deepstream --source-type file --source-uri /path/to/video.mp4 \
+  --rtsp-output true --rtsp-port 554 --rtsp-mount /ds-test --display-mode tiled
+```
+
+**Run RTSP streaming with separate individual mounts:**
+When `--rtsp-output` is enabled, any active model head will also automatically stream to its own RTSP endpoint on port 554:
+* Tiled/Original View: `rtsp://<host_ip>:554/ds-test`
+* Depth Estimation: `rtsp://<host_ip>:554/depth`
+* Object Detection: `rtsp://<host_ip>:554/detection`
+* Segmentation: `rtsp://<host_ip>:554/segmentation`
+* Optical Flow: `rtsp://<host_ip>:554/optical-flow`
+
+To verify streaming via `gst-launch-1.0`:
+```bash
+gst-launch-1.0 rtspsrc location=rtsp://127.0.0.1:554/ds-test ! rtph264depay ! h264parse ! fakesink num-buffers=10
+```
+
+**Run with USB camera (all tasks enabled locally):**
+```bash
+./dinov3_deepstream --source-type camera --source-uri /dev/video0 --rtsp-output false
 ```
 
 **Process a video file with only depth and segmentation:**
 ```bash
 ./dinov3_deepstream --source-type file --source-uri /path/to/video.mp4 \
-  --do-detection false --do-optical-flow false
+  --rtsp-output false --do-detection false --do-optical-flow false
 ```
 
-**Stream from RTSP source with tiled display:**
+**Stream from RTSP source with tiled display locally:**
 ```bash
 ./dinov3_deepstream --source-type rtsp \
   --source-uri rtsp://192.168.1.100:8554/stream \
-  --display-mode tiled
+  --rtsp-output false --display-mode tiled
 ```
 
 **Debug mode (generate pipeline visualization):**
@@ -234,25 +256,3 @@ The pipeline builder ([src/pipeline/pipeline_builder.cpp](dinov3_deepstream/src/
 
 Both projects share the same task-specific head models and DINOv3 backbone weights.
 
-## License
-
-- Code in this repo: Apache-2.0
-- DINOv3: Licensed separately by Meta (see [DINOv3 LICENSE](https://github.com/facebookresearch/dinov3))
-- NVIDIA DeepStream SDK: Closed-source SDK subject to NVIDIA's terms of use. See the [NGC DeepStream collection](https://catalog.ngc.nvidia.com/orgs/nvidia/collections/deepstream_sdk) for license details.
-- We don't distribute DINOv3 weights. Follow upstream instructions to obtain them.
-
-## References
-
-- [Oriane Siméoni, Huy V. Vo, Maximilian Seitzer, Federico Baldassarre, Maxime Oquab, Cijo Jose, Vasil Khalidov, Marc Szafraniec, Seungeun Yi, Michaël Ramamonjisoa, Francisco Massa, Daniel Haziza, Luca Wehrstedt, Jianyuan Wang, Timothée Darcet, Théo Moutakanni, Leonel Sentana, Claire Roberts, Andrea Vedaldi, Jamie Tolan, John Brandt, Camille Couprie, Julien Mairal, Hervé Jégou, Patrick Labatut, Piotr Bojanowski (2025). Dinov3. *arXiv preprint arXiv:2508.10104.*](https://github.com/facebookresearch/dinov3)
-
-- [NVIDIA DeepStream SDK Documentation](https://docs.nvidia.com/metropolis/deepstream/dev-guide/index.html)
-
-- [Escarabajal, Rafael J. (2025). dinov3_ros](https://github.com/Raessan/dinov3_ros)
-
-- [Escarabajal, Rafael J. (2025). object_detection_dinov3](https://github.com/Raessan/object_detection_dinov3)
-
-- [Escarabajal, Rafael J. (2025). semantic_segmentation_dinov3](https://github.com/Raessan/semantic_segmentation_dinov3)
-
-- [Escarabajal, Rafael J. (2025). optical_flow_dinov3](https://github.com/Raessan/optical_flow_dinov3)
-
-- [Escarabajal, Rafael J. (2025). depth_dinov3](https://github.com/Raessan/depth_dinov3)

@@ -20,7 +20,7 @@ std::string PipelineBuilder::build_source_branch() {
 
         case SourceType::FILE:
             ss << "nvurisrcbin uri=file://" << config.pipeline.source_uri
-               << " disable-audio=true"
+               << " disable-audio=true file-loop=true"
                << " ! mux.sink_0 ";
             break;
 
@@ -87,8 +87,19 @@ std::string PipelineBuilder::build_tiled_muxer() {
        << "columns=" << cols << " "
        << "width=" << (config.pipeline.width * cols) << " "
        << "height=" << (config.pipeline.height * rows) << " ! "
-       << "nvvideoconvert ! "
-       << "nveglglessink sync=" << (config.pipeline.live_source ? "false" : "true") << " ";
+       << "nvvideoconvert ! ";
+
+    if (config.pipeline.rtsp_output) {
+        ss << "video/x-raw(memory:NVMM),format=I420 ! "
+           << "nvv4l2h264enc bitrate=4000000 insert-sps-pps=1 ! "
+           << "h264parse ! "
+           << "rtph264pay config-interval=1 ! "
+           << "udpsink host=127.0.0.1 port=5400 sync="
+           << (config.pipeline.live_source ? "false" : "true")
+           << " async=false ";
+    } else {
+        ss << "nveglglessink sync=" << (config.pipeline.live_source ? "false" : "true") << " ";
+    }
 
     return ss.str();
 }
@@ -97,7 +108,25 @@ std::string PipelineBuilder::build_visualization_branch() {
     std::stringstream ss;
     ss << "tee name=t0 ";
 
-    if (config.pipeline.display_mode == DisplayMode::SEPARATE) {
+    if (config.pipeline.rtsp_output) {
+        if (config.pipeline.display_mode == DisplayMode::TILED) {
+            ss << build_tiled_muxer();
+            ss << "t0. ! queue name=q_original ! "
+               << "nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=RGBA ! "
+               << "tilemux.sink_0 ";
+        } else {
+            // SEPARATE mode (RTSP): Stream original image to port 5400
+            ss << "t0. ! queue ! nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=I420 ! "
+               << "nvv4l2h264enc bitrate=4000000 insert-sps-pps=1 ! "
+               << "h264parse ! "
+               << "rtph264pay config-interval=1 ! "
+               << "udpsink host=127.0.0.1 port=5400 sync="
+               << (config.pipeline.live_source ? "false" : "true")
+               << " async=false ";
+        }
+    } else if (config.pipeline.display_mode == DisplayMode::SEPARATE) {
         // SEPARATE mode: create visualization window
         ss << "t0. ! queue ! nvvideoconvert ! nveglglessink sync="
            << (config.pipeline.live_source ? "false" : "true") << " ";
@@ -121,98 +150,146 @@ std::string PipelineBuilder::build_inference_branches() {
        << "nvinfer name=dinov3 config-file-path=" << config.model_paths.dinov3_config
        << " ! tee name=t1 allow-not-linked=true ";
 
-    // Each branch - tee will NOT pass through buffers, forcing independent copies
-    // The probes modify surfaces in-place, so we need truly independent memory
+    int sink_idx = 1;
 
-    if (config.pipeline.display_mode == DisplayMode::SEPARATE) {
-        // Separate windows mode - each head gets its own sink
+    // Depth branch
+    if (config.inference_enable.depth) {
+        ss << "t1. ! queue name=q_depth ! "
+           << "nvinfer name=depth config-file-path="
+           << config.model_paths.depth_config << " ! "
+           << "nvvideoconvert name=postdepthconv ! "
+           << "video/x-raw(memory:NVMM),format=RGBA ! "
+           << "tee name=t_depth ";
 
-        // Depth branch
-        if (config.inference_enable.depth) {
-            ss << "t1. ! queue name=q_depth ! "
-               << "nvinfer name=depth config-file-path="
-               << config.model_paths.depth_config << " ! "
-               << "nvvideoconvert name=postdepthconv ! "
-               << "video/x-raw(memory:NVMM),format=NV12 ! "
-               << "nveglglessink sync=false ";
+        // Branch 1: Connect to tilemux if tiled mode is active
+        if (config.pipeline.display_mode == DisplayMode::TILED) {
+            ss << "t_depth. ! queue ! tilemux.sink_" << sink_idx++ << " ";
         }
 
-        // Detection branch
-        if (config.inference_enable.detection) {
-            ss << "t1. ! queue name=q_det ! "
-               << "nvinfer name=detection config-file-path="
-               << config.model_paths.detection_config << " ! "
-               << "nvvideoconvert name=postdetectionconv ! "
-               << "video/x-raw(memory:NVMM),format=RGBA ! nvdsosd ! "
-               << "nveglglessink sync=false ";
+        // Branch 2: Handle main output (RTSP or local separate window)
+        if (config.pipeline.rtsp_output) {
+            // Stream to UDP port 5401 for /depth
+            ss << "t_depth. ! queue ! nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=I420 ! "
+               << "nvv4l2h264enc bitrate=4000000 insert-sps-pps=1 ! "
+               << "h264parse ! "
+               << "rtph264pay config-interval=1 ! "
+               << "udpsink host=127.0.0.1 port=5401 sync="
+               << (config.pipeline.live_source ? "false" : "true")
+               << " async=false ";
+        } else {
+            // Local display mode
+            if (config.pipeline.display_mode == DisplayMode::SEPARATE) {
+                ss << "t_depth. ! queue ! nveglglessink sync=false ";
+            } else {
+                ss << "t_depth. ! queue ! fakesink sync=false ";
+            }
+        }
+    }
+
+    // Detection branch
+    if (config.inference_enable.detection) {
+        ss << "t1. ! queue name=q_det ! "
+           << "nvinfer name=detection config-file-path="
+           << config.model_paths.detection_config << " ! "
+           << "nvvideoconvert name=postdetectionconv ! "
+           << "video/x-raw(memory:NVMM),format=RGBA ! nvdsosd ! "
+           << "tee name=t_det ";
+
+        // Branch 1: Connect to tilemux if tiled mode is active
+        if (config.pipeline.display_mode == DisplayMode::TILED) {
+            ss << "t_det. ! queue ! tilemux.sink_" << sink_idx++ << " ";
         }
 
-        // Segmentation branch
-        if (config.inference_enable.segmentation) {
-            ss << "t1. ! queue name=q_seg ! "
-               << "nvinfer name=seg config-file-path="
-               << config.model_paths.segmentation_config << " ! "
-               << "nvvideoconvert ! "
-               << "video/x-raw(memory:NVMM),format=RGBA,width=" << config.pipeline.width
-               << ",height=" << config.pipeline.height << " ! "
-               << "nvdsosd ! "
-               << "nveglglessink sync=false ";
+        // Branch 2: Handle main output (RTSP or local separate window)
+        if (config.pipeline.rtsp_output) {
+            // Stream to UDP port 5402 for /detection
+            ss << "t_det. ! queue ! nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=I420 ! "
+               << "nvv4l2h264enc bitrate=4000000 insert-sps-pps=1 ! "
+               << "h264parse ! "
+               << "rtph264pay config-interval=1 ! "
+               << "udpsink host=127.0.0.1 port=5402 sync="
+               << (config.pipeline.live_source ? "false" : "true")
+               << " async=false ";
+        } else {
+            // Local display mode
+            if (config.pipeline.display_mode == DisplayMode::SEPARATE) {
+                ss << "t_det. ! queue ! nveglglessink sync=false ";
+            } else {
+                ss << "t_det. ! queue ! fakesink sync=false ";
+            }
+        }
+    }
+
+    // Segmentation branch
+    if (config.inference_enable.segmentation) {
+        ss << "t1. ! queue name=q_seg ! "
+           << "nvinfer name=seg config-file-path="
+           << config.model_paths.segmentation_config << " ! "
+           << "nvvideoconvert ! "
+           << "video/x-raw(memory:NVMM),format=RGBA,width=" << config.pipeline.width
+           << ",height=" << config.pipeline.height << " ! nvdsosd ! "
+           << "tee name=t_seg ";
+
+        // Branch 1: Connect to tilemux if tiled mode is active
+        if (config.pipeline.display_mode == DisplayMode::TILED) {
+            ss << "t_seg. ! queue ! tilemux.sink_" << sink_idx++ << " ";
         }
 
-        // Optical flow branch
-        if (config.inference_enable.optical_flow) {
-            ss << "t1. ! queue name=q_flow ! "
-               << "nvinfer name=optical_flow config-file-path="
-               << config.model_paths.optical_flow_config << " ! "
-               << "nvvideoconvert name=postflowconv ! "
-               << "video/x-raw(memory:NVMM),format=NV12 ! "
-               << "nveglglessink sync=false";
+        // Branch 2: Handle main output (RTSP or local separate window)
+        if (config.pipeline.rtsp_output) {
+            // Stream to UDP port 5403 for /segmentation
+            ss << "t_seg. ! queue ! nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=I420 ! "
+               << "nvv4l2h264enc bitrate=4000000 insert-sps-pps=1 ! "
+               << "h264parse ! "
+               << "rtph264pay config-interval=1 ! "
+               << "udpsink host=127.0.0.1 port=5403 sync="
+               << (config.pipeline.live_source ? "false" : "true")
+               << " async=false ";
+        } else {
+            // Local display mode
+            if (config.pipeline.display_mode == DisplayMode::SEPARATE) {
+                ss << "t_seg. ! queue ! nveglglessink sync=false ";
+            } else {
+                ss << "t_seg. ! queue ! fakesink sync=false ";
+            }
         }
-    } else {
-        // Tiled mode - connect inference heads to tilemux (tilemux created in build_visualization_branch)
-        // Sink 0 is reserved for original image, inference heads start at sink 1
-        int sink_idx = 1;
+    }
 
-        // Depth branch
-        if (config.inference_enable.depth) {
-            ss << "t1. ! queue name=q_depth ! "
-               << "nvinfer name=depth config-file-path="
-               << config.model_paths.depth_config << " ! "
-               << "nvvideoconvert name=postdepthconv ! "
-               << "video/x-raw(memory:NVMM),format=RGBA ! "
-               << "tilemux.sink_" << sink_idx++ << " ";
-        }
+    // Optical flow branch
+    if (config.inference_enable.optical_flow) {
+        ss << "t1. ! queue name=q_flow ! "
+           << "nvinfer name=optical_flow config-file-path="
+           << config.model_paths.optical_flow_config << " ! "
+           << "nvvideoconvert name=postflowconv ! "
+           << "video/x-raw(memory:NVMM),format=RGBA ! "
+           << "tee name=t_flow ";
 
-        // Detection branch
-        if (config.inference_enable.detection) {
-            ss << "t1. ! queue name=q_det ! "
-               << "nvinfer name=detection config-file-path="
-               << config.model_paths.detection_config << " ! "
-               << "nvvideoconvert name=postdetectionconv ! "
-               << "video/x-raw(memory:NVMM),format=RGBA ! nvdsosd ! "
-               << "tilemux.sink_" << sink_idx++ << " ";
-        }
-
-        // Segmentation branch
-        if (config.inference_enable.segmentation) {
-            ss << "t1. ! queue name=q_seg ! "
-               << "nvinfer name=seg config-file-path="
-               << config.model_paths.segmentation_config << " ! "
-               << "nvvideoconvert ! "
-               << "video/x-raw(memory:NVMM),format=RGBA,width=" << config.pipeline.width
-               << ",height=" << config.pipeline.height << " ! "
-               << "nvdsosd ! "
-               << "tilemux.sink_" << sink_idx++ << " ";
+        // Branch 1: Connect to tilemux if tiled mode is active
+        if (config.pipeline.display_mode == DisplayMode::TILED) {
+            ss << "t_flow. ! queue ! tilemux.sink_" << sink_idx++ << " ";
         }
 
-        // Optical flow branch
-        if (config.inference_enable.optical_flow) {
-            ss << "t1. ! queue name=q_flow ! "
-               << "nvinfer name=optical_flow config-file-path="
-               << config.model_paths.optical_flow_config << " ! "
-               << "nvvideoconvert name=postflowconv ! "
-               << "video/x-raw(memory:NVMM),format=RGBA ! "
-               << "tilemux.sink_" << sink_idx++ << " ";
+        // Branch 2: Handle main output (RTSP or local separate window)
+        if (config.pipeline.rtsp_output) {
+            // Stream to UDP port 5404 for /optical-flow
+            ss << "t_flow. ! queue ! nvvideoconvert ! "
+               << "video/x-raw(memory:NVMM),format=I420 ! "
+               << "nvv4l2h264enc bitrate=4000000 insert-sps-pps=1 ! "
+               << "h264parse ! "
+               << "rtph264pay config-interval=1 ! "
+               << "udpsink host=127.0.0.1 port=5404 sync="
+               << (config.pipeline.live_source ? "false" : "true")
+               << " async=false ";
+        } else {
+            // Local display mode
+            if (config.pipeline.display_mode == DisplayMode::SEPARATE) {
+                ss << "t_flow. ! queue ! nveglglessink sync=false ";
+            } else {
+                ss << "t_flow. ! queue ! fakesink sync=false ";
+            }
         }
     }
 

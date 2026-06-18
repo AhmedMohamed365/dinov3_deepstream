@@ -111,9 +111,36 @@ GstPadProbeReturn DINOv3ProbeHandler::handle_buffer(
     NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
     if (!batch_meta) return GST_PAD_PROBE_OK;
 
+    static int frame_count = 0;
+    frame_count++;
+    const bool should_log = (frame_count % 30 == 0);
+    if (should_log) {
+        std::cerr << "[DEBUG DINOv3] Probe handle_buffer called. frame_count=" << frame_count << std::endl;
+        GstMapInfo in_map{};
+        if (gst_buffer_map(buf, &in_map, GST_MAP_READ)) {
+            NvBufSurface* surface = (NvBufSurface*)in_map.data;
+            if (surface && surface->numFilled > 0) {
+                NvBufSurfaceParams& sl = surface->surfaceList[0];
+                uint8_t host_pixels[10];
+                cudaError_t err = cudaMemcpy(host_pixels, sl.dataPtr, 10 * sizeof(uint8_t), cudaMemcpyDeviceToHost);
+                if (err == cudaSuccess) {
+                    std::cerr << "[DEBUG DINOv3] Input Y pixels: ";
+                    for (int i=0; i<10; ++i) std::cerr << (int)host_pixels[i] << " ";
+                    std::cerr << std::endl;
+                } else {
+                    std::cerr << "[DEBUG DINOv3] Input pixels cudaMemcpy failed: " << cudaGetErrorString(err) << std::endl;
+                }
+            }
+            gst_buffer_unmap(buf, &in_map);
+        }
+    }
+
     nvds_acquire_meta_lock(batch_meta);
 
     if (!should_process_batch(batch_meta)) {
+        if (should_log) {
+            std::cerr << "[DEBUG DINOv3] batch already processed, skipping" << std::endl;
+        }
         nvds_release_meta_lock(batch_meta);
         return GST_PAD_PROBE_OK;
     }
@@ -126,12 +153,58 @@ GstPadProbeReturn DINOv3ProbeHandler::handle_buffer(
         if (!frame_meta) continue;
 
         NvDsInferTensorMeta* tensor_meta = find_backbone_tensor(frame_meta);
-        if (!tensor_meta) continue;
-        if (!tensor_meta->num_output_layers) continue;
-        if (!tensor_meta->out_buf_ptrs_dev) continue;
+        if (!tensor_meta) {
+            if (should_log) {
+                std::cerr << "[DEBUG DINOv3] NvDsInferTensorMeta NOT found in frame_meta!" << std::endl;
+            }
+            continue;
+        }
+        if (!tensor_meta->num_output_layers) {
+            if (should_log) {
+                std::cerr << "[DEBUG DINOv3] tensor_meta has 0 output layers!" << std::endl;
+            }
+            continue;
+        }
+        if (!tensor_meta->out_buf_ptrs_dev) {
+            if (should_log) {
+                std::cerr << "[DEBUG DINOv3] tensor_meta out_buf_ptrs_dev is null!" << std::endl;
+            }
+            continue;
+        }
 
         int feat_idx = find_feature_layer_index(tensor_meta);
-        if (!tensor_meta->out_buf_ptrs_dev[feat_idx]) continue;
+        if (!tensor_meta->out_buf_ptrs_dev[feat_idx]) {
+            if (should_log) {
+                std::cerr << "[DEBUG DINOv3] feature layer buffer pointer is null!" << std::endl;
+            }
+            continue;
+        }
+
+        if (should_log) {
+            std::cerr << "[DEBUG DINOv3] Successfully found backbone feature tensor. DataType=" << (int)tensor_meta->output_layers_info[feat_idx].dataType << std::endl;
+            void* dev_ptr = tensor_meta->out_buf_ptrs_dev[feat_idx];
+            int vol = volume_from_dims(tensor_meta->output_layers_info[feat_idx].inferDims);
+            if (tensor_meta->output_layers_info[feat_idx].dataType == NvDsInferDataType::FLOAT) {
+                std::vector<float> host_features(vol);
+                cudaMemcpy(host_features.data(), dev_ptr, vol * sizeof(float), cudaMemcpyDeviceToHost);
+                float min_val = host_features[0];
+                float max_val = host_features[0];
+                double sum_val = 0;
+                for (int i=0; i<vol; ++i) {
+                    if (host_features[i] < min_val) min_val = host_features[i];
+                    if (host_features[i] > max_val) max_val = host_features[i];
+                    sum_val += host_features[i];
+                }
+                std::cerr << "[DEBUG DINOv3] Features stats (frame=" << frame_meta->frame_num << ", ptr=" << dev_ptr << "): vol=" << vol
+                          << " min=" << min_val
+                          << " max=" << max_val
+                          << " mean=" << (sum_val / vol)
+                          << " first_5=[" << host_features[0] << ", " << host_features[1] << ", " << host_features[2] << ", " << host_features[3] << ", " << host_features[4] << "]"
+                          << std::endl;
+            } else {
+                std::cerr << "[DEBUG DINOv3] Backbone features dataType is not FLOAT!" << std::endl;
+            }
+        }
 
         GstNvDsPreProcessBatchMeta* pbm = create_preprocess_meta(
             tensor_meta, frame_meta, feat_idx);
