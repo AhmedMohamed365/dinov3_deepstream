@@ -12,7 +12,7 @@ process-mode=1              # full-frame
 network-type=0              # detector
 num-detected-classes=80
 labelfile-path=/dinov3_deepstream/dinov3_models/head_detection/class_names.txt
-interval=0
+interval=5
 
 # Consume tensor attached on buffer as GstNvDsPreProcessBatchMeta
 input-tensor-from-meta=1

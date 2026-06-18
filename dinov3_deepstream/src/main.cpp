@@ -143,6 +143,16 @@ int main(int argc, char *argv[]) {
     else if (a == "--rtsp-mount" && i + 1 < argc) {
       app_config.pipeline.rtsp_mount = argv[++i];
     }
+    else if (a == "--tracker" && i + 1 < argc) {
+      std::string val = argv[++i];
+      app_config.pipeline.enable_tracker = (val == "true" || val == "1");
+    }
+    else if (a == "--tracker-config" && i + 1 < argc) {
+      app_config.pipeline.tracker_config = argv[++i];
+    }
+    else if (a == "--tracker-lib" && i + 1 < argc) {
+      app_config.pipeline.tracker_lib = argv[++i];
+    }
     else if (a == "-h" || a == "--help") {
       std::cout << "Usage: " << argv[0] << " [OPTIONS]\n\n"
                 << "Options:\n"
@@ -161,6 +171,9 @@ int main(int argc, char *argv[]) {
                 << "  --rtsp-output [true|false]       Enable/disable RTSP streaming output instead of windows (default: true)\n"
                 << "  --rtsp-port PORT                 RTSP server port (default: 554)\n"
                 << "  --rtsp-mount MOUNT               RTSP mount path (default: /ds-test)\n"
+                << "  --tracker [true|false]           Enable object tracking (default: true)\n"
+                << "  --tracker-config PATH            Path to tracker config (default: /opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvDCF_perf.yml)\n"
+                << "  --tracker-lib PATH               Path to tracker low-level library (default: /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so)\n"
                 << "  -h, --help                       Show this help message\n";
       return 0;
     }

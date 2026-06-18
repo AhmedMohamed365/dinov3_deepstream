@@ -31,6 +31,9 @@ struct PipelineConfig {
     bool rtsp_output = true;         // True to stream detection via RTSP, false to display
     int rtsp_port = 554;             // Port for RTSP server
     std::string rtsp_mount = "/ds-test"; // Mount point for RTSP stream
+    bool enable_tracker = true;
+    std::string tracker_config = "/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvDCF_perf.yml";
+    std::string tracker_lib = "/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so";
 };
 
 // Model configuration paths

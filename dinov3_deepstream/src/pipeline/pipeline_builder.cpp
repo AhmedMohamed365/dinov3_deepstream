@@ -191,8 +191,16 @@ std::string PipelineBuilder::build_inference_branches() {
     if (config.inference_enable.detection) {
         ss << "t1. ! queue name=q_det ! "
            << "nvinfer name=detection config-file-path="
-           << config.model_paths.detection_config << " ! "
-           << "nvvideoconvert name=postdetectionconv ! "
+           << config.model_paths.detection_config << " ! ";
+
+        if (config.pipeline.enable_tracker) {
+            ss << "nvtracker name=tracker "
+               << "ll-config-file=" << config.pipeline.tracker_config << " "
+               << "ll-lib-file=" << config.pipeline.tracker_lib << " "
+               << "tracker-width=640 tracker-height=640 gpu-id=0 ! ";
+        }
+
+        ss << "nvvideoconvert name=postdetectionconv ! "
            << "video/x-raw(memory:NVMM),format=RGBA ! nvdsosd ! "
            << "tee name=t_det ";
 
