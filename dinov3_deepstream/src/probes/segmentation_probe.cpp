@@ -1,5 +1,6 @@
 #include "segmentation_probe.h"
 #include "utils/gst_utils.h"
+#include "utils/fps_tracker.h"
 #include <algorithm>
 #include <iostream>
 
@@ -360,6 +361,7 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
         }
     }
 
+    FPSTracker::getInstance().update("Segmentation", batch_meta->num_frames_in_batch);
     nvds_release_meta_lock(batch_meta);
     gst_buffer_unmap(buf, &in_map);
     return GST_PAD_PROBE_OK;

@@ -16,6 +16,7 @@
 
 #include <filesystem>
 #include "pipeline/pipeline_builder.h"
+#include "utils/fps_tracker.h"
 
 #include <bits/stdc++.h>
 #include <iostream>
@@ -278,6 +279,54 @@ int main(int argc, char *argv[]) {
             })) {
       gst_object_unref(pipeline);
       return 1;
+    }
+  }
+
+  if (app_config.inference_enable.detection) {
+    GstElement* det_elem = gst_bin_get_by_name(GST_BIN(pipeline), "detection");
+    if (det_elem) {
+      GstPad* pad = gst_element_get_static_pad(det_elem, "src");
+      if (pad) {
+        gint interval = 0;
+        g_object_get(det_elem, "interval", &interval, NULL);
+
+        struct ProbeData {
+          gint interval;
+        };
+        ProbeData* pdata = new ProbeData{interval};
+
+        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER,
+            [](GstPad* pad, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
+              (void)pad;
+              ProbeData* pdata = (ProbeData*)user_data;
+              GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+              if (buf) {
+                NvDsBatchMeta* batch_meta = gst_buffer_get_nvds_batch_meta(buf);
+                if (batch_meta) {
+                  FPSTracker::getInstance().update("Detection", batch_meta->num_frames_in_batch);
+                  
+                  bool is_infer = false;
+                  if (pdata->interval == 0) {
+                    is_infer = true;
+                  } else {
+                    for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame; l_frame = l_frame->next) {
+                      NvDsFrameMeta* fmeta = (NvDsFrameMeta*)l_frame->data;
+                      if (fmeta && (fmeta->frame_num % (pdata->interval + 1) == 0)) {
+                        is_infer = true;
+                        break;
+                      }
+                    }
+                  }
+                  if (is_infer) {
+                    FPSTracker::getInstance().update("Detection(Infer)", batch_meta->num_frames_in_batch);
+                  }
+                }
+              }
+              return GST_PAD_PROBE_OK;
+            }, pdata, [](gpointer data) { delete (ProbeData*)data; });
+        gst_object_unref(pad);
+      }
+      gst_object_unref(det_elem);
     }
   }
 

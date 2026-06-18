@@ -1,5 +1,6 @@
 #include "optical_flow_probe.h"
 #include "utils/gst_utils.h"
+#include "utils/fps_tracker.h"
 #include "utils_cuda/optical_flow.h"
 #include <algorithm>
 #include <iostream>
@@ -562,6 +563,7 @@ GstPadProbeReturn OpticalFlowVisualizationHandler::handle_buffer(
         std::cout << "[OPTICAL_FLOW_VIZ] No frames updated\n";
     }
 
+    FPSTracker::getInstance().update("OpticalFlow", batch_meta->num_frames_in_batch);
     gst_buffer_unmap(buf, &in_map);
     return GST_PAD_PROBE_OK;
 }

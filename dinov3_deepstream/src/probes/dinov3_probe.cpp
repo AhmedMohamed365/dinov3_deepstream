@@ -1,5 +1,6 @@
 #include "dinov3_probe.h"
 #include "utils/gst_utils.h"
+#include "utils/fps_tracker.h"
 #include <cstring>
 
 bool DINOv3ProbeHandler::should_process_batch(NvDsBatchMeta* batch_meta) {
@@ -226,6 +227,7 @@ GstPadProbeReturn DINOv3ProbeHandler::handle_buffer(
         break;
     }
 
+    FPSTracker::getInstance().update("Backbone", batch_meta->num_frames_in_batch);
     nvds_release_meta_lock(batch_meta);
     return GST_PAD_PROBE_OK;
 }

@@ -256,3 +256,5 @@ The pipeline builder ([src/pipeline/pipeline_builder.cpp](dinov3_deepstream/src/
 
 Both projects share the same task-specific head models and DINOv3 backbone weights.
 
+best commnad : 
+./dinov3_deepstream/build/dinov3_deepstream --source-type file --source-uri /dinov3_deepstream/sample.mp4 --rtsp-output true --rtsp-port 554 --rtsp-mount /ds-test  --do-depth true  -do-segmentation true  --do-depth true --do-detection true --tracker true --tracker-config /opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_IOU.yml

@@ -1,5 +1,6 @@
 #include "depth_probe.h"
 #include "utils/gst_utils.h"
+#include "utils/fps_tracker.h"
 #include <iostream>
 
 bool DepthProbeHandler::should_debug() const {
@@ -249,6 +250,7 @@ GstPadProbeReturn DepthProbeHandler::handle_buffer(
         std::cout << "[DEPTH/CUDA] no frames updated\n";
     }
 
+    FPSTracker::getInstance().update("Depth", batch_meta->num_frames_in_batch);
     gst_buffer_unmap(buf, &in_map);
     return GST_PAD_PROBE_OK;
 }
