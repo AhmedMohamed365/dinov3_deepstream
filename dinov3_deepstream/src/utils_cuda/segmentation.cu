@@ -1,6 +1,7 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <stdint.h>
+#include "segmentation.h"
 
 #ifndef NUM_CLASSES
 #define NUM_CLASSES 134
@@ -262,4 +263,55 @@ accumulate_centroids_kernel<<<grid, block, 0, stream>>>(
     (unsigned long long*)sumy_dev);
 
 return cudaGetLastError();
+}
+
+__global__ void translate_segmentation_masks_kernel(
+    const int32_t* __restrict__ src,
+    int32_t* __restrict__ dst,
+    int W, int H,
+    const TranslationVector* __restrict__ trans,
+    int num_trans)
+{
+    int x = (int)(blockIdx.x * blockDim.x + threadIdx.x);
+    int y = (int)(blockIdx.y * blockDim.y + threadIdx.y);
+    if (x >= W || y >= H) return;
+
+    // Default to background
+    dst[y * W + x] = 0;
+
+    // For each translation vector, we check if the source pixel corresponding
+    // to this destination pixel (x - dx, y - dy) belongs to the translated class.
+    // If so, we assign it. Since classes don't heavily overlap, first match wins.
+    for (int i = 0; i < num_trans; ++i) {
+        int sx = x - trans[i].dx;
+        int sy = y - trans[i].dy;
+        if (sx >= 0 && sx < W && sy >= 0 && sy < H) {
+            int src_id = src[sy * W + sx];
+            if (src_id == trans[i].class_id) {
+                dst[y * W + x] = src_id;
+                break;
+            }
+        }
+    }
+}
+
+cudaError_t translate_segmentation_masks_launch(
+    const int32_t* src_class_map,
+    int32_t* dst_class_map,
+    int W, int H,
+    const TranslationVector* translations_dev,
+    int num_translations,
+    cudaStream_t stream)
+{
+    if (!src_class_map || !dst_class_map || !translations_dev) return cudaErrorInvalidDevicePointer;
+    if (W <= 0 || H <= 0 || num_translations <= 0) return cudaErrorInvalidValue;
+
+    dim3 block(16, 16);
+    dim3 grid((W + block.x - 1) / block.x,
+              (H + block.y - 1) / block.y);
+
+    translate_segmentation_masks_kernel<<<grid, block, 0, stream>>>(
+        src_class_map, dst_class_map, W, H, translations_dev, num_translations);
+
+    return cudaGetLastError();
 }

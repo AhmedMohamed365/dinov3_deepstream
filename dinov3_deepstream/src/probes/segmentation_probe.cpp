@@ -5,6 +5,8 @@
 #include <opencv2/opencv.hpp>
 #include <algorithm>
 #include <iostream>
+#include "nvds_opticalflow_meta.h"
+#include <iostream>
 
 // GpuBuffers methods
 void SegmentationProbeHandler::GpuBuffers::ensure_class_map(size_t H, size_t W) {
@@ -15,6 +17,11 @@ void SegmentationProbeHandler::GpuBuffers::ensure_class_map(size_t H, size_t W) 
         if (class_map_dev) cudaFree(class_map_dev);
         cudaMalloc(&class_map_dev, need_bytes);
         class_map_bytes = need_bytes;
+    }
+    if (!last_class_map_dev || last_class_map_bytes < need_bytes) {
+        if (last_class_map_dev) cudaFree(last_class_map_dev);
+        cudaMalloc(&last_class_map_dev, need_bytes);
+        last_class_map_bytes = need_bytes;
     }
 }
 
@@ -39,6 +46,10 @@ void SegmentationProbeHandler::GpuBuffers::cleanup() {
     if (class_map_dev) {
         cudaFree(class_map_dev);
         class_map_dev = nullptr;
+    }
+    if (last_class_map_dev) {
+        cudaFree(last_class_map_dev);
+        last_class_map_dev = nullptr;
     }
     if (count_dev) {
         cudaFree(count_dev);
@@ -232,6 +243,9 @@ void SegmentationProbeHandler::add_label_overlays(
         ox = std::max(0, std::min(outW - 1, ox));
         oy = std::max(0, std::min(outH - 1, oy));
         items.push_back({id, cnt, ox, oy});
+        
+        // Save centroid for optical flow tracking
+        gpu_buffers.last_centroids.push_back({id, (float)ox, (float)oy});
     }
 
     // Sort by pixel count (descending) and limit to top K
@@ -321,7 +335,6 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
     }
 
     cudaStream_t stream = 0;
-    SegmentationTensorInfo last_seg_info; // will hold last processed tensor info
     // Lock metadata while modifying
     nvds_acquire_meta_lock(batch_meta);
 
@@ -337,6 +350,75 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
 
         SegmentationTensorInfo seg_info;
         if (!extract_segmentation_tensor(batch_meta, fmeta, pbm, seg_info)) {
+            // SKIPPED FRAME - Use Optical Flow Tracking
+            if (gpu_buffers.last_class_map_dev && last_seg_info.C > 0) {
+                NvDsOpticalFlowMeta* flow_meta = nullptr;
+                for (NvDsMetaList* l = fmeta->frame_user_meta_list; l; l = l->next) {
+                    NvDsUserMeta* user_meta = (NvDsUserMeta*)l->data;
+                    if (user_meta->base_meta.meta_type == NVDS_OPTICAL_FLOW_META) {
+                        flow_meta = (NvDsOpticalFlowMeta*)user_meta->user_meta_data;
+                        break;
+                    }
+                }
+                if (flow_meta && flow_meta->data) {
+                    std::vector<TranslationVector> trans;
+                    NvOFFlowVector* flow_data = (NvOFFlowVector*)flow_meta->data;
+                    
+                    NvBufSurfaceParams& sl = surface->surfaceList[b];
+                    int outW = (int)sl.width;
+                    int outH = (int)sl.height;
+                    
+                    for (auto& centroid : gpu_buffers.last_centroids) {
+                        int block_size = 4;
+                        int bx = (int)centroid.x / block_size;
+                        int by = (int)centroid.y / block_size;
+                        if (bx >= 0 && bx < (int)flow_meta->cols && by >= 0 && by < (int)flow_meta->rows) {
+                            NvOFFlowVector mv = flow_data[by * flow_meta->cols + bx];
+                            float dx_nv12 = mv.flowx / 32.0f;
+                            float dy_nv12 = mv.flowy / 32.0f;
+                            
+                            // Map translation back to class_map resolution
+                            int dx_map = (int)(dx_nv12 * last_seg_info.W / outW);
+                            int dy_map = (int)(dy_nv12 * last_seg_info.H / outH);
+                            
+                            if (dx_map != 0 || dy_map != 0) {
+                                trans.push_back({centroid.class_id, dx_map, dy_map});
+                            }
+                            
+                            // Update centroid for next skipped frame
+                            centroid.x += dx_nv12;
+                            centroid.y += dy_nv12;
+                        }
+                    }
+                    
+                    if (!trans.empty()) {
+                        TranslationVector* trans_dev;
+                        cudaMalloc(&trans_dev, trans.size() * sizeof(TranslationVector));
+                        cudaMemcpyAsync(trans_dev, trans.data(), trans.size() * sizeof(TranslationVector), cudaMemcpyHostToDevice, stream);
+                        
+                        translate_segmentation_masks_launch(
+                            gpu_buffers.last_class_map_dev,
+                            gpu_buffers.class_map_dev,
+                            last_seg_info.W, last_seg_info.H,
+                            trans_dev, trans.size(), stream);
+                            
+                        cudaFreeAsync(trans_dev, stream);
+                        
+                        // Copy current back to last for next iteration
+                        cudaMemcpyAsync(gpu_buffers.last_class_map_dev, gpu_buffers.class_map_dev,
+                                        gpu_buffers.class_map_bytes, cudaMemcpyDeviceToDevice, stream);
+                    }
+                    
+                    // Render translated mask
+                    int pitch = (int)sl.pitch;
+                    uint8_t* base = (uint8_t*)sl.dataPtr;
+                    uint8_t* y_dev = base;
+                    uint8_t* uv_dev = base + (size_t)pitch * (size_t)outH;
+                    seg_classmap_to_nv12_launch(gpu_buffers.class_map_dev, last_seg_info.W, last_seg_info.H,
+                                                y_dev, uv_dev, outW, outH, pitch, pitch,
+                                                context->config.visualization.alpha, stream);
+                }
+            }
             continue;
         }
         // keep a copy of the most recent tensor info for post‑loop processing
@@ -345,12 +427,19 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
         if (!colorize_frame(surface, b, seg_info, stream)) {
             continue;
         }
+        
+        // Copy freshly inferred mask to last_class_map_dev
+        cudaMemcpyAsync(gpu_buffers.last_class_map_dev, gpu_buffers.class_map_dev,
+                        gpu_buffers.class_map_bytes, cudaMemcpyDeviceToDevice, stream);
+                        
+        // Clear old centroids for new inference
+        gpu_buffers.last_centroids.clear();
 
         NvBufSurfaceParams& sl = surface->surfaceList[b];
         int outW = (int)sl.width;
         int outH = (int)sl.height;
 
-        add_label_overlays(batch_meta, fmeta, seg_info, outW, outH, stream);
+        // add_label_overlays(batch_meta, fmeta, seg_info, outW, outH, stream);
     }
 
     // Clear object metadata to prevent nvdsosd from drawing detection boxes
@@ -365,32 +454,7 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
         }
     }
 
-    // ------------------------------------------------------------
-    // 1) Copy class map (GPU) → host
-    int H = last_seg_info.H;
-    int W = last_seg_info.W;
-    int C = last_seg_info.C;
-    size_t map_bytes = static_cast<size_t>(H) * W * sizeof(int32_t);
-    std::vector<int32_t> h_class_map(H * W);
-    cudaMemcpyAsync(h_class_map.data(), gpu_buffers.class_map_dev, map_bytes,
-                    cudaMemcpyDeviceToHost, stream);
-    cudaStreamSynchronize(stream);
-
-    // 2) Build binary masks per label and generate NvDsObjectMeta
-    std::map<int, cv::Mat> label_masks;
-    cv::Mat class_map_mat(H, W, CV_32S, h_class_map.data());
-    for (int lbl = 0; lbl < C; ++lbl) {
-        cv::Mat mask = (class_map_mat == lbl);
-        if (cv::countNonZero(mask) > 0) {
-            label_masks[lbl] = mask.clone();
-        }
-    }
-    generate_segmentation_objects(batch_meta, label_masks);
-
-    // 3) Through‑put FPS (already measured above)
-    FPSTracker::getInstance().update("Segmentation", batch_meta->num_frames_in_batch);
-
-    // 4) Determine if this batch performed an actual segmentation inference
+    // Determine if this batch performed an actual segmentation inference
     gboolean infer = FALSE;
     gint interval = 0;
     GstElement *parent = GST_ELEMENT(gst_pad_get_parent(pad));
@@ -409,9 +473,37 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
             }
         }
     }
+
     if (infer) {
         FPSTracker::getInstance().update("Segmentation(Infer)", batch_meta->num_frames_in_batch);
+
+        // Only generate segmentation objects (bounding boxes) if we have valid inference metadata
+        if (last_seg_info.C > 0 && last_seg_info.H > 0 && last_seg_info.W > 0) {
+            // 1) Copy class map (GPU) → host
+            int H = last_seg_info.H;
+            int W = last_seg_info.W;
+            int C = last_seg_info.C;
+            size_t map_bytes = static_cast<size_t>(H) * W * sizeof(int32_t);
+            std::vector<int32_t> h_class_map(H * W);
+            cudaMemcpyAsync(h_class_map.data(), gpu_buffers.class_map_dev, map_bytes,
+                            cudaMemcpyDeviceToHost, stream);
+            cudaStreamSynchronize(stream);
+
+            // 2) Build binary masks per label and generate NvDsObjectMeta
+            std::map<int, cv::Mat> label_masks;
+            cv::Mat class_map_mat(H, W, CV_32S, h_class_map.data());
+            for (int lbl = 0; lbl < C; ++lbl) {
+                cv::Mat mask = (class_map_mat == lbl);
+                if (cv::countNonZero(mask) > 0) {
+                    label_masks[lbl] = mask.clone();
+                }
+            }
+            generate_segmentation_objects(batch_meta, label_masks);
+        }
     }
+
+    // 3) Through‑put FPS (already measured above)
+    FPSTracker::getInstance().update("Segmentation", batch_meta->num_frames_in_batch);
 
     nvds_release_meta_lock(batch_meta);
     gst_buffer_unmap(buf, &in_map);

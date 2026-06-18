@@ -33,6 +33,16 @@ private:
         int32_t* class_map_dev = nullptr;
         size_t class_map_bytes = 0;
 
+        int32_t* last_class_map_dev = nullptr;
+        size_t last_class_map_bytes = 0;
+
+        struct Centroid {
+            int class_id;
+            float x;
+            float y;
+        };
+        std::vector<Centroid> last_centroids;
+
         int32_t* count_dev = nullptr;
         int64_t* sumx_dev = nullptr;
         int64_t* sumy_dev = nullptr;
@@ -44,9 +54,9 @@ private:
     } gpu_buffers;
 
     struct SegmentationTensorInfo {
-        void* logits_dev;
-        bool is_half;
-        int C, H, W;
+        void* logits_dev = nullptr;
+        bool is_half = false;
+        int C = 0, H = 0, W = 0;
     };
 
     bool ensure_buffer_writable(GstPadProbeInfo* info);
@@ -70,6 +80,8 @@ private:
         const SegmentationTensorInfo& seg_info,
         int outW, int outH,
         cudaStream_t stream);
+
+    SegmentationTensorInfo last_seg_info;
 };
 
 // C-style callback wrapper for GStreamer

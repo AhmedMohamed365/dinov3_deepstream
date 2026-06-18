@@ -24,3 +24,17 @@ cudaError_t seg_classmap_to_nv12_launch(
         int64_t* sumx_dev,
         int64_t* sumy_dev,
         cudaStream_t stream);
+
+struct TranslationVector {
+    int class_id;
+    int dx;
+    int dy;
+};
+
+cudaError_t translate_segmentation_masks_launch(
+    const int32_t* src_class_map,
+    int32_t* dst_class_map,
+    int W, int H,
+    const TranslationVector* translations_dev,
+    int num_translations,
+    cudaStream_t stream);

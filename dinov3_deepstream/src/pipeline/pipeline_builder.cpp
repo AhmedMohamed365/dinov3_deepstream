@@ -236,7 +236,8 @@ std::string PipelineBuilder::build_inference_branches() {
            << "nvinfer name=seg config-file-path=" << config.model_paths.segmentation_config << " ! ";
         // optional tracker for segmentation objects
         if (config.pipeline.enable_tracker) {
-            ss << "nvtracker name=seg_tracker "
+            ss << "nvvideoconvert ! video/x-raw(memory:NVMM),format=NV12 ! nvof ! "
+               << "nvtracker name=seg_tracker "
                << "ll-config-file=" << config.pipeline.tracker_config << " "
                << "ll-lib-file=" << config.pipeline.tracker_lib << " "
                << "tracker-width=640 tracker-height=640 gpu-id=0 ! ";
