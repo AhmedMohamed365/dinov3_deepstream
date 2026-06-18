@@ -9,6 +9,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-rtsp-server-1.0)
 
 find_package(CUDAToolkit REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # DeepStream root (adjust if needed)
 set(DEEPSTREAM_ROOT /opt/nvidia/deepstream/deepstream-8.0)
@@ -49,6 +50,7 @@ target_include_directories(dinov3_deepstream PRIVATE
     ${GST_INCLUDE_DIRS}
     ${DEEPSTREAM_ROOT}/sources/includes
     ${CUDAToolkit_INCLUDE_DIRS}
+    ${OpenCV_INCLUDE_DIRS}
 )
 
 target_link_directories(nvdsinfer_custom_detection PRIVATE
@@ -76,4 +78,5 @@ target_link_libraries(dinov3_deepstream PRIVATE
     nvds_meta
     nvbufsurface
     CUDA::cudart
+    ${OpenCV_LIBRARIES}
 )

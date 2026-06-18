@@ -233,9 +233,15 @@ std::string PipelineBuilder::build_inference_branches() {
     // Segmentation branch
     if (config.inference_enable.segmentation) {
         ss << "t1. ! queue name=q_seg ! "
-           << "nvinfer name=seg config-file-path="
-           << config.model_paths.segmentation_config << " ! "
-           << "nvvideoconvert ! "
+           << "nvinfer name=seg config-file-path=" << config.model_paths.segmentation_config << " ! ";
+        // optional tracker for segmentation objects
+        if (config.pipeline.enable_tracker) {
+            ss << "nvtracker name=seg_tracker "
+               << "ll-config-file=" << config.pipeline.tracker_config << " "
+               << "ll-lib-file=" << config.pipeline.tracker_lib << " "
+               << "tracker-width=640 tracker-height=640 gpu-id=0 ! ";
+        }
+        ss << "nvvideoconvert ! "
            << "video/x-raw(memory:NVMM),format=RGBA,width=" << config.pipeline.width
            << ",height=" << config.pipeline.height << " ! nvdsosd ! "
            << "tee name=t_seg ";

@@ -11,7 +11,7 @@ process-mode=1              # full-frame
 network-type=100              # non-default
 num-detected-classes=134
 labelfile-path=/dinov3_deepstream/dinov3_models/head_segmentation/class_names.txt
-interval=0
+interval=5
 
 #parse-segmentation-func-name=NvDsInferParseCustomSegmentation
 #custom-lib-path=/dinov3_deepstream/dinov3_deepstream/build/libnvdsinfer_custom_segmentation.so

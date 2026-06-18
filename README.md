@@ -46,12 +46,24 @@ This project complements [dinov3_ros](https://github.com/Raessan/dinov3_ros), pr
 ### Build the Application
 
 ```bash
+# Clone the repository (if not already)
 git clone https://github.com/Raessan/dinov3_deepstream.git
+# Enter the repository root
 cd dinov3_deepstream/dinov3_deepstream
-mkdir build && cd build
+# Create a fresh build directory (do NOT run this inside an existing build folder)
+mkdir -p build && cd build
+# Configure the project and compile
 cmake ..
 make -j$(nproc)
 ```
+
+> **Note for Docker users**: When running inside the provided Docker container, the repository is mounted at `/dinov3_deepstream`. Adjust the `cd` commands accordingly:
+> ```bash
+> cd /dinov3_deepstream/dinov3_deepstream
+> mkdir -p build && cd build
+> cmake ..
+> make -j$(nproc)
+> ```
 
 The compiled binary will be located at `build/dinov3_deepstream`.
 

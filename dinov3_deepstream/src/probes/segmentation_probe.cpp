@@ -1,6 +1,8 @@
 #include "segmentation_probe.h"
 #include "utils/gst_utils.h"
 #include "utils/fps_tracker.h"
+#include "utils/segmentation_tracker.h"
+#include <opencv2/opencv.hpp>
 #include <algorithm>
 #include <iostream>
 
@@ -319,7 +321,7 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
     }
 
     cudaStream_t stream = 0;
-
+    SegmentationTensorInfo last_seg_info; // will hold last processed tensor info
     // Lock metadata while modifying
     nvds_acquire_meta_lock(batch_meta);
 
@@ -337,6 +339,8 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
         if (!extract_segmentation_tensor(batch_meta, fmeta, pbm, seg_info)) {
             continue;
         }
+        // keep a copy of the most recent tensor info for post‑loop processing
+        last_seg_info = seg_info;
 
         if (!colorize_frame(surface, b, seg_info, stream)) {
             continue;
@@ -361,7 +365,54 @@ GstPadProbeReturn SegmentationProbeHandler::handle_buffer(
         }
     }
 
+    // ------------------------------------------------------------
+    // 1) Copy class map (GPU) → host
+    int H = last_seg_info.H;
+    int W = last_seg_info.W;
+    int C = last_seg_info.C;
+    size_t map_bytes = static_cast<size_t>(H) * W * sizeof(int32_t);
+    std::vector<int32_t> h_class_map(H * W);
+    cudaMemcpyAsync(h_class_map.data(), gpu_buffers.class_map_dev, map_bytes,
+                    cudaMemcpyDeviceToHost, stream);
+    cudaStreamSynchronize(stream);
+
+    // 2) Build binary masks per label and generate NvDsObjectMeta
+    std::map<int, cv::Mat> label_masks;
+    cv::Mat class_map_mat(H, W, CV_32S, h_class_map.data());
+    for (int lbl = 0; lbl < C; ++lbl) {
+        cv::Mat mask = (class_map_mat == lbl);
+        if (cv::countNonZero(mask) > 0) {
+            label_masks[lbl] = mask.clone();
+        }
+    }
+    generate_segmentation_objects(batch_meta, label_masks);
+
+    // 3) Through‑put FPS (already measured above)
     FPSTracker::getInstance().update("Segmentation", batch_meta->num_frames_in_batch);
+
+    // 4) Determine if this batch performed an actual segmentation inference
+    gboolean infer = FALSE;
+    gint interval = 0;
+    GstElement *parent = GST_ELEMENT(gst_pad_get_parent(pad));
+    if (parent) {
+        g_object_get(G_OBJECT(parent), "interval", &interval, NULL);
+        gst_object_unref(parent);
+    }
+    if (interval == 0) {
+        infer = TRUE;
+    } else {
+        for (NvDsMetaList* l_frame = batch_meta->frame_meta_list; l_frame; l_frame = l_frame->next) {
+            NvDsFrameMeta* fmeta = (NvDsFrameMeta*)l_frame->data;
+            if (fmeta && (fmeta->frame_num % (interval + 1) == 0)) {
+                infer = TRUE;
+                break;
+            }
+        }
+    }
+    if (infer) {
+        FPSTracker::getInstance().update("Segmentation(Infer)", batch_meta->num_frames_in_batch);
+    }
+
     nvds_release_meta_lock(batch_meta);
     gst_buffer_unmap(buf, &in_map);
     return GST_PAD_PROBE_OK;
