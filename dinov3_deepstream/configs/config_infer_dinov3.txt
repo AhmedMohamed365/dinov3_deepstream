@@ -9,7 +9,7 @@ gpu-id=0
 batch-size=1
 
 # FP16=2, INT8=1, FP32=0
-network-mode=0
+network-mode=2
 
 # Primary (full frame)
 process-mode=1

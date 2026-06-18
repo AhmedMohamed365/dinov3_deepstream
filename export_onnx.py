@@ -53,7 +53,7 @@ def main():
         dummy_input,
         onnx_path,
         export_params=True,
-        opset_version=14,
+        opset_version=17,
         do_constant_folding=True,
         input_names=['input'],
         output_names=['features'],
